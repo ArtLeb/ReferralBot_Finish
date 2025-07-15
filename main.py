@@ -1,34 +1,47 @@
 import asyncio
 import logging
 from aiogram import Dispatcher
-from utils.bot_obj import bot
-from handlers import (
-    common_handlers,
-    coupon_handlers,
-    admin_handlers,
-    partner_handlers,
-    subscription_handlers
-)
-from middlewares.role_middleware import RoleMiddleware
+from aiogram.fsm.storage.memory import MemoryStorage  # Импорт хранилища состояний
+from utils.bot_obj import bot, dp
+from handlers import common_handlers, owner_handlers, partner_handlers, admin_handlers, client_handlers
+from middlewares import RoleMiddleware, SubscriptionMiddleware, DatabaseMiddleware
+from utils.logger import setup_logger
+from utils.database import init_db
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
+    """
+    Главная функция запуска бота
+    """
+    # 1. Настройка системы логирования
+    logger = setup_logger()
+    logger.info("Starting bot")
     
-    dp = Dispatcher()
+    # 2. Инициализация базы данных
+    await init_db()
+    logger.info("Database initialized")
     
-    # Регистрация middleware
-    dp.message.middleware(RoleMiddleware())
-    dp.callback_query.middleware(RoleMiddleware())
+    # 3. Регистрация middleware
+    dp.update.middleware(DatabaseMiddleware())  # Обеспечивает сессию БД
+    dp.update.middleware(RoleMiddleware())      # Определяет роли пользователя
+    dp.update.middleware(SubscriptionMiddleware())  # Проверяет подписки
     
-    # Регистрация роутеров
-    dp.include_router(common_handlers.router)
-    dp.include_router(coupon_handlers.router)
-    dp.include_router(admin_handlers.router)
-    dp.include_router(partner_handlers.router)
-    dp.include_router(subscription_handlers.router)
+    logger.info("Middlewares registered")
     
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    # 4. Регистрация роутеров (обработчиков команд)
+    # Порядок не важен, но логично следовать от общего к частному
+    dp.include_router(common_handlers.router)      # Общие команды (/start, помощь)
+    dp.include_router(owner_handlers.router)       # Команды для владельцев
+    dp.include_router(partner_handlers.router)     # Команды для партнеров
+    dp.include_router(admin_handlers.router)       # Команды для администраторов
+    dp.include_router(client_handlers.router)      # Команды для клиентов
+    
+    logger.info("Routers registered")
+    
+    # 5. Запуск бота
+    await bot.delete_webhook(drop_pending_updates=True)  # Очистка очереди обновлений
+    logger.info("Bot is ready to start polling")
+    await dp.start_polling(bot)  # Основной цикл обработки сообщений
 
 if __name__ == '__main__':
+    # Запуск асинхронного event loop
     asyncio.run(main())

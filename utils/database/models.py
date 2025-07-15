@@ -1,150 +1,471 @@
-from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, DECIMAL, TIMESTAMP, SmallInteger, Text
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy import (
+    Column, Integer, PrimaryKeyConstraint, String, ForeignKey, Boolean, DateTime,
+    DECIMAL, TIMESTAMP, Date, Enum, BigInteger, Text, SmallInteger
+)
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from .db_session import Base
 
-Base = declarative_base()
+# Класс для работы со статусами купонов
+class CouponStatusHelper:
+    """Вспомогательный класс для работы со статусами купонов"""
+    # Сопоставление имен статусов с их ID
+    STATUS_MAP = {
+        "active": 1,
+        "used": 2,
+        "expired": 3,
+        "cancelled": 4
+    }
+    
+    @staticmethod
+    def get_status_id(status_name: str) -> int:
+        """
+        Возвращает ID статуса по его имени
+        
+        Args:
+            status_name: Название статуса (active, used и т.д.)
+            
+        Returns:
+            ID статуса или 1 (active) по умолчанию
+        """
+        return CouponStatusHelper.STATUS_MAP.get(
+            status_name.lower(), 
+            CouponStatusHelper.STATUS_MAP["active"]
+        )
 
+# Модель логов действий
+class ActionLog(Base):
+    __tablename__ = 'ACTION_LOGS'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('USERS.id', ondelete='SET NULL'), nullable=True)
+    action_type = Column(String(50), nullable=True)
+    entity_id = Column(Integer, nullable=True)
+    timestamp = Column(DateTime, default=func.now(), comment="Время действия")
+    
+    # Связь с пользователем
+    user = relationship("User", lazy="selectin")
+
+# Модель категорий компаний
+class CompanyCategory(Base):
+    __tablename__ = 'COMPANY_CATEGORY'
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    name = Column(String(256), nullable=False, comment="Название категории")
+    
+    # Связь с локациями через ассоциативную таблицу
+    locations = relationship(
+        "LocCat", 
+        back_populates="category",
+        lazy="selectin"
+    )
+
+# Модель связи локаций и категорий
+class LocCat(Base):
+    __tablename__ = 'LOC_CATS'
+    __table_args__ = (
+        PrimaryKeyConstraint('comp_id', 'id_location', 'id_category'),
+        {}
+    )
+    
+    comp_id = Column(Integer, ForeignKey('COMPANIES.id_comp', ondelete='CASCADE'))
+    id_location = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location', ondelete='CASCADE'))
+    id_category = Column(BigInteger, ForeignKey('COMPANY_CATEGORY.id', ondelete='CASCADE'))
+    
+    # Связи
+    company = relationship("Company", lazy="selectin")
+    location = relationship("CompLocation", lazy="selectin")
+    category = relationship("CompanyCategory", back_populates="locations", lazy="selectin")
+
+# Модель пользователя
 class User(Base):
     __tablename__ = 'USERS'
+    
     id = Column(Integer, primary_key=True, autoincrement=True)
-    id_tg = Column(Integer, unique=True, nullable=False)
-    user_name = Column(String(255))
-    first_name = Column(String(255), nullable=False)
-    last_name = Column(String(255), nullable=False)
-    tel_num = Column(String(11), nullable=False)
-    reg_date = Column(Date, nullable=False)
+    id_tg = Column(BigInteger, unique=True, nullable=False, comment="Telegram ID пользователя")
+    user_name = Column(String(255), comment="Username в Telegram")
+    first_name = Column(String(255), nullable=False, comment="Имя пользователя")
+    last_name = Column(String(255), nullable=False, comment="Фамилия пользователя")
+    tel_num = Column(String(15), nullable=False, comment="Номер телефона")
+    reg_date = Column(Date, nullable=False, server_default=func.current_date(), comment="Дата регистрации")
+    role = Column(String(50), default='client', comment="Базовая роль пользователя")
+    
+    # Отношения
+    issued_coupons = relationship(
+        "Coupon", 
+        foreign_keys="Coupon.issued_by", 
+        back_populates="issuer",
+        lazy="selectin"
+    )
+    used_coupons = relationship(
+        "Coupon", 
+        foreign_keys="Coupon.used_by", 
+        back_populates="user",
+        lazy="selectin"
+    )
+    client_coupons = relationship(
+        "Coupon", 
+        foreign_keys="Coupon.client_id", 
+        back_populates="client",
+        lazy="selectin"
+    )
+    roles = relationship(
+        "UserRole", 
+        back_populates="user",
+        foreign_keys="UserRole.user_id",
+        lazy="selectin"
+    )
+    action_logs = relationship(
+        "ActionLog", 
+        back_populates="user",
+        lazy="selectin"
+    )
 
-    roles = relationship('UserRole', back_populates='user')
-    coupons_received = relationship('CouponClient', foreign_keys='CouponClient.id_client', back_populates='client')
-    coupons_used = relationship('CouponClient', foreign_keys='CouponClient.id_used_user', back_populates='used_user')
-
+# Модель компании
 class Company(Base):
     __tablename__ = 'COMPANIES'
+    
     id_comp = Column(Integer, primary_key=True, autoincrement=True)
-    name_comp = Column(String(255))
+    Name_comp = Column(String(255), nullable=False, comment="Название компании")
+    owner_id = Column(Integer, nullable=False)  # ID владельца компании
+    category = Column(String(255))  # Категория компании
+    
+    # Отношения
+    locations = relationship(
+        "CompLocation", 
+        back_populates="company",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    coupon_types = relationship(
+        "CouponType", 
+        back_populates="company",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    subscriptions = relationship(
+        "Subscription", 
+        back_populates="company",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    tg_groups = relationship(
+        "TgGroup", 
+        back_populates="company",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    loc_cats = relationship(
+        "LocCat", 
+        back_populates="company",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
-    locations = relationship('CompanyLocation', back_populates='company')
-    subscriptions = relationship('Subscription', back_populates='company')
-
-class CompanyLocation(Base):
+# Модель локации компании
+class CompLocation(Base):
     __tablename__ = 'COMP_LOCATIONS'
-    id_location = Column(Integer, primary_key=True)
-    id_comp = Column(Integer, ForeignKey('COMPANIES.id_comp'), nullable=False)
-    name_loc = Column(String(255), nullable=False)
-    address = Column(String(255))
+    
+    id_location = Column(Integer, primary_key=True, autoincrement=True)
+    id_comp = Column(Integer, ForeignKey('COMPANIES.id_comp', ondelete='CASCADE'), nullable=False, comment="ID компании")
+    name_loc = Column(String(255), nullable=False, comment="Название локации")
+    address = Column(String(255), comment="Адрес локации")
+    
+    # Отношения
+    company = relationship(
+        "Company", 
+        back_populates="locations",
+        lazy="selectin"
+    )
+    coupon_types = relationship(
+        "CouponType", 
+        back_populates="location",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    tg_groups = relationship(
+        "TgGroup", 
+        back_populates="location",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    subscriptions = relationship(
+        "Subscription", 
+        back_populates="location",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    used_coupons = relationship(
+        "Coupon", 
+        back_populates="used_location",
+        lazy="selectin"
+    )
+    loc_cats = relationship(
+        "LocCat", 
+        back_populates="location",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
-    company = relationship('Company', back_populates='locations')
-    coupons = relationship('CouponType', back_populates='location')
+# Модель роли пользователя
+#class Role(Base):
+ #   __tablename__ = 'ROLES'
+#    
+#    id_role = Column(Integer, primary_key=True, autoincrement=True)
+#    name_role = Column(String(255), nullable=False, comment="Название роли")
+#    add_clients = Column(Boolean, default=False, comment="Может добавлять клиентов")
+#    add_partners = Column(Boolean, default=False, comment="Может добавлять партнеров")
+#    add_admins = Column(Boolean, default=False, comment="Может добавлять администраторов")
+#    add_groups = Column(Boolean, default=False, comment="Может добавлять группы")
+#    gen_coupons = Column(Boolean, default=False, comment="Может генерировать купоны")
+#    set_discount = Column(Boolean, default=False, comment="Может устанавливать скидки")
+#    set_commission = Column(Boolean, default=False, comment="Может устанавливать комиссии")
+#    check_subscription = Column(Boolean, default=False, comment="Может проверять подписки")
+#    get_coupons = Column(Boolean, default=False, comment="Может получать купоны")
+#    view_stats = Column(Boolean, default=False, comment="Может просматривать статистику")
+    
+    # Отношения
+#    user_roles = relationship(
+#        "UserRole", 
+#        back_populates="role",
+#        cascade="all, delete-orphan",
+#        lazy="selectin"
+#    )
 
-class Role(Base):
-    __tablename__ = 'ROLES'
-    id_role = Column(Integer, primary_key=True, autoincrement=True)
-    name_role = Column(String(255))
-    add_clients = Column(Boolean)
-    add_partners = Column(Boolean)
-    add_admins = Column(Boolean)
-    add_groups = Column(Boolean)
-    gen_coups = Column(Boolean)
-    set_disc = Column(Boolean)
-    set_comiss = Column(Boolean)
-    check_subscr = Column(Boolean)
-    get_coups = Column(Boolean)
-    stat = Column(Boolean)
-
-    user_roles = relationship('UserRole', back_populates='role')
-
+# Модель связи пользователь-роль
 class UserRole(Base):
     __tablename__ = 'USERS_ROLES'
-    id_tg = Column(Integer, ForeignKey('USERS.id_tg'), primary_key=True)
-    id_role = Column(Integer, ForeignKey('ROLES.id_role'), primary_key=True)
-    id_comp = Column(Integer, ForeignKey('COMPANIES.id_comp'), primary_key=True)
-    id_location = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location'))
-    begda = Column(Date, primary_key=True)
-    endda = Column(Date, nullable=False)
-    changed_by = Column(Integer, ForeignKey('USERS.id_tg'), nullable=False)
-    changed_date = Column(TIMESTAMP)
-    locked = Column(Boolean, nullable=False)
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('USERS.id', ondelete='CASCADE'), nullable=False, comment="ID пользователя")
+    role = Column(String(50), nullable=False, comment="Название роли (admin, partner, client, teach_admin )")
+    company_id = Column(Integer, ForeignKey('COMPANIES.id_comp', ondelete='CASCADE'), nullable=False, comment="ID компании")
+    location_id = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location', ondelete='SET NULL'), comment="ID локации")
+    start_date = Column(Date, nullable=False, server_default=func.current_date(), comment="Дата начала роли")
+    end_date = Column(Date, nullable=False, comment="Дата окончания роли")
+    changed_by = Column(Integer, ForeignKey('USERS.id', ondelete='CASCADE'), nullable=False, comment="Кто изменил")
+    changed_date = Column(DateTime, server_default=func.now(), comment="Дата изменения")
+    is_locked = Column(Boolean, default=False, comment="Заблокирована ли роль")
+    
+    # Отношения
+    user = relationship(
+        "User", 
+        foreign_keys=[user_id], 
+        back_populates="roles",
+        lazy="selectin"
+    )
+    
+    company = relationship(
+        "Company", 
+        lazy="selectin"
+    )
+    location = relationship(
+        "CompLocation", 
+        lazy="selectin"
+    )
+    changer = relationship(
+        "User", 
+        foreign_keys=[changed_by],
+        lazy="selectin"
+    )
 
-    user = relationship('User', back_populates='roles')
-    role = relationship('Role', back_populates='user_roles')
-    company = relationship('Company')
-    location = relationship('CompanyLocation')
-    changed_by_user = relationship('User', foreign_keys=[changed_by])
-
+# Модель типа купона
 class CouponType(Base):
     __tablename__ = 'COUPON_TYPES'
-    id_coup = Column(Integer, primary_key=True, autoincrement=True)
-    coup_code = Column(String(255), nullable=False, unique=True)
-    partner_agent = Column(Integer, ForeignKey('COMPANIES.id_comp'), nullable=False)
-    partner_cup_comp = Column(Integer, ForeignKey('COMPANIES.id_comp'), nullable=False)
-    partner_cup_loc = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location'), nullable=False)
-    discount = Column(SmallInteger, nullable=False)
-    commission = Column(SmallInteger, nullable=False)
-    all_gr_subscription = Column(Boolean, nullable=False)
-    usage_limit = Column(SmallInteger, nullable=False)
-    begda = Column(Date, nullable=False)
-    endda = Column(Date, nullable=False)
+    
+    id_coupon_type = Column(Integer, primary_key=True, autoincrement=True)
+    code_prefix = Column(String(10), nullable=False, comment="Префикс кода купона")
+    company_id = Column(Integer, ForeignKey('COMPANIES.id_comp', ondelete='CASCADE'), nullable=False, comment="ID компании")
+    location_id = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location', ondelete='CASCADE'), nullable=False, comment="ID локации")
+    discount_percent = Column(DECIMAL(5, 2), nullable=False, comment="Процент скидки")
+    commission_percent = Column(DECIMAL(5, 2), nullable=False, comment="Процент комиссии")
+    require_all_groups = Column(Boolean, default=False, comment="Требуются все группы")
+    usage_limit = Column(Integer, default=0, comment="Лимит использования")
+    start_date = Column(Date, nullable=False, server_default=func.current_date(), comment="Дата начала действия")
+    end_date = Column(Date, nullable=False, comment="Дата окончания действия")
+    # Новые поля
+    company_agent_id = Column(BigInteger, nullable=False, comment="ID агента компании")
+    location_agent_id = Column(BigInteger, nullable=False, comment="ID агента локации")
+    days_for_used = Column(BigInteger, nullable=False, comment="Дней для использования")
+    agent_agree = Column(Boolean, default=False, comment="Подтверждение агента")
+    
+    # Отношения
+    company = relationship(
+        "Company", 
+        back_populates="coupon_types",
+        lazy="selectin"
+    )
+    location = relationship(
+        "CompLocation", 
+        back_populates="coupon_types",
+        lazy="selectin"
+    )
+    coupons = relationship(
+        "Coupon", 
+        back_populates="coupon_type",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    group_coupons = relationship(
+        "GroupCoupon", 
+        back_populates="coupon_type",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
-    location = relationship('CompanyLocation', back_populates='coupons')
-    groups = relationship('GroupCoupon', back_populates='coupon')
-
-class TelegramGroup(Base):
+# Модель Telegram группы
+class TgGroup(Base):
     __tablename__ = 'TG_GROUPS'
+    
     id_tg_group = Column(Integer, primary_key=True, autoincrement=True)
-    token = Column(String(255), nullable=False)
-    id_comp = Column(Integer, ForeignKey('COMPANIES.id_comp'), nullable=False)
-    id_loc = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location'), nullable=False)
-    name = Column(String(255), nullable=False)
-    active = Column(Boolean, nullable=False)
+    group_id = Column(BigInteger, nullable=False, comment="ID группы в Telegram")
+    company_id = Column(Integer, ForeignKey('COMPANIES.id_comp', ondelete='CASCADE'), nullable=False, comment="ID компании")
+    location_id = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location', ondelete='CASCADE'), nullable=False, comment="ID локации")
+    name = Column(String(255), nullable=False, comment="Название группы")
+    is_active = Column(Boolean, default=True, comment="Активна ли группа")
+    
+    # Отношения
+    company = relationship(
+        "Company", 
+        back_populates="tg_groups",
+        lazy="selectin"
+    )
+    location = relationship(
+        "CompLocation", 
+        back_populates="tg_groups",
+        lazy="selectin"
+    )
+    group_coupons = relationship(
+        "GroupCoupon", 
+        back_populates="group",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
-    coupons = relationship('GroupCoupon', back_populates='group')
-
+# Модель связи группа-купон
 class GroupCoupon(Base):
-    __tablename__ = 'GROUPS_COUPONS'
-    id_coup = Column(Integer, ForeignKey('COUPON_TYPES.id_coup'), primary_key=True)
-    id_tg_group = Column(Integer, ForeignKey('TG_GROUPS.id_tg_group'), primary_key=True)
+    __tablename__ = 'GROUP_COUPONS'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    coupon_type_id = Column(Integer, ForeignKey('COUPON_TYPES.id_coupon_type', ondelete='CASCADE'), nullable=False, comment="ID типа купона")
+    group_id = Column(Integer, ForeignKey('TG_GROUPS.id_tg_group', ondelete='CASCADE'), nullable=False, comment="ID группы")
+    
+    # Отношения
+    coupon_type = relationship(
+        "CouponType", 
+        back_populates="group_coupons",
+        lazy="selectin"
+    )
+    group = relationship(
+        "TgGroup", 
+        back_populates="group_coupons",
+        lazy="selectin"
+    )
 
-    coupon = relationship('CouponType', back_populates='groups')
-    group = relationship('TelegramGroup', back_populates='coupons')
+# Модель статуса купона
+class CouponStatus(Base):
+    __tablename__ = 'COUPON_STATUSES'
+    
+    id_status = Column(SmallInteger, primary_key=True, autoincrement=True, comment="ID статуса")
+    name = Column(String(50), nullable=False, comment="Название статуса")
+    
+    # Отношения
+    coupons = relationship(
+        "Coupon", 
+        back_populates="status",
+        lazy="selectin"
+    )
+    
+    @staticmethod
+    def get_status_id(status_name: str) -> int:
+        """
+        Получает ID статуса по его имени
+        
+        Args:
+            status_name: Название статуса (active, used и т.д.)
+            
+        Returns:
+            ID статуса или 1 (active) по умолчанию
+        """
+        return CouponStatusHelper.get_status_id(status_name)
 
-class CouponClient(Base):
-    __tablename__ = 'COUPON_CLIENT'
-    id_coup = Column(Integer, ForeignKey('COUPON_TYPES.id_coup'), primary_key=True)
-    id_client = Column(Integer, ForeignKey('USERS.id_tg'), primary_key=True)
-    begda = Column(Date, nullable=False)
-    endda = Column(Date, nullable=False)
-    id_parent = Column(Integer, ForeignKey('USERS.id_tg'), nullable=False)
-    id_used_user = Column(Integer, ForeignKey('USERS.id_tg'), nullable=False)
-    id_stat = Column(SmallInteger, ForeignKey('STATUSES.id_stat'), nullable=False)
-    order_sum = Column(DECIMAL(10, 2), nullable=False)
-    location_used = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location'), nullable=False)
-    time_used = Column(TIMESTAMP, nullable=False)
-    comp_used = Column(Integer, ForeignKey('COMPANIES.id_comp'), nullable=False)
+# Модель купона
+class Coupon(Base):
+    __tablename__ = 'COUPONS'
+    
+    id_coupon = Column(Integer, primary_key=True, autoincrement=True, comment="ID купона")
+    code = Column(String(50), unique=True, nullable=False, comment="Уникальный код купона")
+    coupon_type_id = Column(Integer, ForeignKey('COUPON_TYPES.id_coupon_type', ondelete='CASCADE'), nullable=False, comment="ID типа купона")
+    client_id = Column(Integer, ForeignKey('USERS.id', ondelete='CASCADE'), nullable=False, comment="ID клиента")
+    start_date = Column(Date, nullable=False, server_default=func.current_date(), comment="Дата начала действия")
+    end_date = Column(Date, nullable=False, comment="Дата окончания действия")
+    issued_by = Column(Integer, ForeignKey('USERS.id', ondelete='CASCADE'), nullable=False, comment="Кто выдал купон")
+    used_by = Column(Integer, ForeignKey('USERS.id', ondelete='SET NULL'), comment="Кто использовал купон")
+    status_id = Column(SmallInteger, ForeignKey('COUPON_STATUSES.id_status'), default=1, comment="Статус купона")
+    order_amount = Column(DECIMAL(10, 2), comment="Сумма заказа")
+    location_used = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location', ondelete='SET NULL'), comment="Где использован купон")
+    used_at = Column(TIMESTAMP, comment="Когда использован купон")
+    company_used = Column(Integer, ForeignKey('COMPANIES.id_comp', ondelete='SET NULL'), comment="В какой компании использован")
+    
+    # Отношения
+    coupon_type = relationship(
+        "CouponType", 
+        back_populates="coupons",
+        lazy="selectin"
+    )
+    client = relationship(
+        "User", 
+        foreign_keys=[client_id], 
+        back_populates="client_coupons",
+        lazy="selectin"
+    )
+    issuer = relationship(
+        "User", 
+        foreign_keys=[issued_by], 
+        back_populates="issued_coupons",
+        lazy="selectin"
+    )
+    user = relationship(
+        "User", 
+        foreign_keys=[used_by], 
+        back_populates="used_coupons",
+        lazy="selectin"
+    )
+    status = relationship(
+        "CouponStatus", 
+        back_populates="coupons",
+        lazy="selectin"
+    )
+    used_location = relationship(
+        "CompLocation", 
+        back_populates="used_coupons",
+        lazy="selectin"
+    )
+    used_company = relationship(
+        "Company", 
+        lazy="selectin"
+    )
 
-    client = relationship('User', foreign_keys=[id_client], back_populates='coupons_received')
-    used_user = relationship('User', foreign_keys=[id_used_user], back_populates='coupons_used')
-    status = relationship('Status')
-    location = relationship('CompanyLocation')
-    company = relationship('Company')
-
-class Status(Base):
-    __tablename__ = 'STATUSES'
-    id_stat = Column(SmallInteger, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False)
-
+# Модель подписки
 class Subscription(Base):
     __tablename__ = 'SUBSCRIPTIONS'
-    id_comp = Column(Integer, ForeignKey('COMPANIES.id_comp'), primary_key=True)
-    id_location = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location'), primary_key=True)
-    begda = Column(Date, nullable=False)
-    endda = Column(Date, nullable=False)
-    is_active = Column(Boolean, nullable=False)
+    
+    id_subscription = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey('COMPANIES.id_comp'), nullable=False)
+    location_id = Column(Integer, ForeignKey('COMP_LOCATIONS.id_location'), nullable=False)
+    start_date = Column(Date, nullable=False, server_default=func.current_date())
+    end_date = Column(Date, nullable=False)
+    is_active = Column(Boolean, default=True, comment="Активна ли подписка")
+    
+    # Отношения
+    company = relationship("Company", back_populates="subscriptions", lazy="selectin")
+    location = relationship("CompLocation", back_populates="subscriptions", lazy="selectin")
 
-    company = relationship('Company', back_populates='subscriptions')
-    location = relationship('CompanyLocation')
-
+# Модель тега
 class Tag(Base):
     __tablename__ = 'TAGS'
-    id_coup = Column(Integer, ForeignKey('COUPON_TYPES.id_coup'), primary_key=True)
-    id_tg = Column(Integer, ForeignKey('USERS.id_tg'), primary_key=True)
-    tag_text = Column(String(255), primary_key=True)
+    
+    id_tag = Column(Integer, primary_key=True, autoincrement=True, comment="ID тега")
+    tag_name = Column(String(255), nullable=False, comment="Название тега")
+    entity_type = Column(Enum('coupon', 'user', 'company', name='entity_types'), nullable=False, comment="Тип сущности")
+    entity_id = Column(Integer, nullable=False, comment="ID сущности")

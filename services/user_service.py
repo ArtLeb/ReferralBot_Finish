@@ -1,22 +1,14 @@
-import datetime
-from utils.database.models import User
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy import select
+from utils.database.models import User
 
-async def get_or_create_user(session: AsyncSession, tg_id: int, username: str, first_name: str, last_name: str):
-    result = await session.execute(select(User).filter(User.id_tg == tg_id))
-    user = result.scalar_one_or_none()
+class UserService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
     
-    if not user:
-        user = User(
-            id_tg=tg_id,
-            user_name=username,
-            first_name=first_name,
-            last_name=last_name,
-            tel_num="",
-            reg_date=datetime.now().date()
+    async def get_user_by_tg_id(self, tg_id: int) -> User:
+        """Возвращает пользователя по Telegram ID"""
+        result = await self.session.execute(
+            select(User).where(User.id_tg == tg_id)
         )
-        session.add(user)
-        await session.commit()
-    
-    return user
+        return result.scalar_one_or_none()

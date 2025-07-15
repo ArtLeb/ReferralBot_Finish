@@ -1,52 +1,50 @@
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-import os
-from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.pool import NullPool
+from typing import AsyncGenerator
+from utils.config import config
 
-
-load_dotenv()
-
+# Базовый класс для моделей SQLAlchemy
 Base = declarative_base()
 
-
-class SqlConfigBase:
-    """Конфигурация подключения к MySQL"""
-
-    def __init__(self):
-        self.host: str = os.getenv("DB_HOST", "62.217.182.228")
-        self.port: str = os.getenv("DB_PORT", "3306")
-        self.username: str = os.getenv("DB_USERNAME", "art_leb")
-        self.password: str = os.getenv("DB_PASSWORD", "QCK_vjv2Il")
-        self.db_name: str = os.getenv("DB_NAME", "referal_bot")
-
-    @property
-    def url(self) -> str:
-        """Формирует строку подключения к MySQL с драйвером pymysql"""
-        return f"mysql+pymysql://{self.username}:{self.password}@{self.host}:{self.port}/{self.db_name}?charset=utf8mb4"
-
-
-# Создание объекта конфигурации
-sql_config = SqlConfigBase()
-database_uri: str = sql_config.url
-
-# Создание движка SQLAlchemy
-engine = create_engine(
-    database_uri,
-    pool_pre_ping=True,  # Проверяет соединение перед выполнением запроса
-    pool_size=20,        # Размер пула соединений
-    max_overflow=100,    # Количество дополнительных соединений сверх пула
-    pool_recycle=3600,   # Перезапуск соединений каждый час
-    pool_timeout=10,     # Таймаут ожидания соединения
-    echo=False           # Выключить логирование SQL-запросов
+# Создание асинхронного движка для подключения к MySQL
+engine = create_async_engine(
+    # Исправленная строка подключения для MySQL
+    f"mysql+aiomysql://{config.DB_USERNAME}:{config.DB_PASSWORD}"
+    f"@{config.DB_HOST}:{config.DB_PORT}/{config.DB_NAME}",
+    echo=True,          # Логирование SQL-запросов
+    pool_pre_ping=True, # Проверка соединения перед использованием
+    poolclass=NullPool  # Отключение пула соединений для асинхронной работы
 )
 
-# Фабрика сессий SQLAlchemy
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+# Фабрика для создания асинхронных сессий
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,  # Используем асинхронную сессию
+    autocommit=False,     # Ручное управление коммитами
+    autoflush=False,      # Ручное управление сбросом сессии
+    expire_on_commit=False # Объекты остаются доступными после коммита
+)
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Генератор сессий для использования в зависимостях
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Генератор для предоставления сессии БД в контексте запроса"""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()  # Фиксация изменений при успешном выполнении
+        except Exception:
+            await session.rollback()  # Откат при возникновении ошибки
+            raise
+        finally:
+            await session.close()  # Закрытие сессии
+
+# Раскомментированная функция инициализации БД
+async def init_db():
+    """Инициализация БД - создание таблиц"""
+    async with engine.begin() as conn:
+        # Создание всех таблиц, определенных в моделях
+        await conn.run_sync(Base.metadata.create_all)
+
+# Псевдоним для совместимости с существующим кодом
+async_session = AsyncSessionLocal
