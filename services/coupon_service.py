@@ -1,48 +1,134 @@
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
+
+from sqlalchemy import select
 from repositories.coupon_repository import CouponRepository
-from utils.database.models import CouponStatus  # Импорт модели
+from utils.database.models import Coupon, CouponType, CouponStatus
+from services.group_service import GroupService
 
 class CouponService:
+    """Сервис для работы с купонами"""
     def __init__(self, session):
+        self.session = session
         self.coupon_repo = CouponRepository(session)
-
-    async def generate_coupon(self, issuer_id: int, client_id: int, coupon_type_id: int) -> dict:
-        """Генерирует новый купон и сохраняет его в базе данных"""
-        coupon_code = f"REF-{uuid.uuid4().hex[:8].upper()}"
+        self.group_service = GroupService(session)
+    
+    async def generate_coupon(self, issuer_id: int, client_id: int, coupon_type_id: int) -> Coupon:
+        """
+        Генерирует новый купон
+        Args:
+            issuer_id: ID пользователя, выдающего купон
+            client_id: ID клиента, получающего купон
+            coupon_type_id: ID типа купона
+        Returns:
+            Coupon: Созданный купон
+        """
+        # Получение типа купона
+        coupon_type = await self.session.get(CouponType, coupon_type_id)
+        if not coupon_type:
+            raise ValueError("Тип купона не найден")
         
-        # Используем метод get_status_id для получения ID активного статуса
-        active_status_id = CouponStatus.get_status_id("active")
+        # Проверка подписки на группы (если требуется)
+        if coupon_type.require_all_groups:
+            if not await self.group_service.check_user_subscription(client_id, coupon_type_id):
+                raise ValueError("Пользователь не подписан на все требуемые группы")
         
-        # Формируем данные купона
-        coupon_data = {
-            'code': coupon_code,
-            'coupon_type_id': coupon_type_id,
-            'client_id': client_id,
-            'start_date': datetime.now().date(),
-            'end_date': (datetime.now() + timedelta(days=30)).date(),
-            'issued_by': issuer_id,
-            'status_id': active_status_id  # Используем полученный ID
-        }
+        # Генерация уникального кода
+        code = f"{coupon_type.code_prefix}-{uuid.uuid4().hex[:8].upper()}"
         
-        # Создаем купон в базе данных
-        coupon = await self.coupon_repo.create_coupon(coupon_data)
+        # Создание купона
+        coupon = Coupon(
+            code=code,
+            coupon_type_id=coupon_type_id,
+            client_id=client_id,
+            start_date=datetime.now().date(),
+            end_date=datetime.now().date() + timedelta(days=coupon_type.days_for_used),
+            issued_by=issuer_id,
+            status_id=CouponStatus.get_status_id("active")
+        )
+        
+        self.session.add(coupon)
+        await self.session.commit()
         return coupon
-
-    async def use_coupon(self, coupon_code: str, user_id: int, amount: float):
-        """Отмечает купон как использованный"""
+    
+    async def redeem_coupon(self, coupon_code: str, redeemed_by: int, amount: Decimal) -> Coupon:
+        """
+        Активирует (погашает) купон
+        Args:
+            coupon_code: Код купона
+            redeemed_by: ID пользователя, активировавшего купон
+            amount: Сумма покупки
+        Returns:
+            Coupon: Обновленный купон
+        """
         coupon = await self.coupon_repo.get_coupon_by_code(coupon_code)
-        if coupon:
-            # Получаем ID статуса "used"
-            used_status_id = CouponStatus.get_status_id("used")
-            
-            # Обновляем данные купона
-            coupon.used_by = user_id
-            coupon.used_at = datetime.now()
-            coupon.order_amount = amount
-            coupon.status_id = used_status_id  # Устанавливаем статус "использован"
-            
-            # Сохраняем изменения
-            await self.coupon_repo.session.commit()
-            return coupon
-        return None
+        if not coupon:
+            raise ValueError("Купон не найден")
+        
+        # Проверка статуса
+        if coupon.status_id != CouponStatus.get_status_id("active"):
+            raise ValueError("Купон не активен")
+        
+        # Проверка срока действия
+        if coupon.end_date < datetime.now().date():
+            coupon.status_id = CouponStatus.get_status_id("expired")
+            await self.session.commit()
+            raise ValueError("Срок действия купона истек")
+        
+        # Обновление данных купона
+        coupon.used_by = redeemed_by
+        coupon.used_at = datetime.now()
+        coupon.order_amount = amount
+        coupon.status_id = CouponStatus.get_status_id("used")
+        
+        await self.session.commit()
+        return coupon
+    
+    async def get_user_coupons(self, user_id: int) -> list[Coupon]:
+        """
+        Получает купоны пользователя
+        Args:
+            user_id: ID пользователя
+        Returns:
+            list[Coupon]: Список купонов
+        """
+        stmt = select(Coupon).where(
+            (Coupon.client_id == user_id) &
+            (Coupon.status_id == CouponStatus.get_status_id("active"))
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+    
+    async def create_coupon_type(
+        self,
+        company_id: int,
+        discount_percent: Decimal,
+        days_valid: int = 30
+    ) -> CouponType:
+        """
+        Создает новый тип купона
+        Args:
+            company_id: ID компании
+            discount_percent: Процент скидки
+            days_valid: Срок действия в днях
+        Returns:
+            CouponType: Созданный тип купона
+        """
+        code_prefix = f"CPN-{company_id}-{str(int(discount_percent))}"
+        coupon_type = CouponType(
+            code_prefix=code_prefix,
+            company_id=company_id,
+            discount_percent=discount_percent,
+            commission_percent=Decimal('5.0'),  # Стандартная комиссия
+            require_all_groups=False,
+            usage_limit=0,
+            start_date=datetime.now().date(),
+            end_date=datetime.now().date() + timedelta(days=365),
+            days_for_used=days_valid,
+            agent_agree=True
+        )
+        
+        self.session.add(coupon_type)
+        await self.session.commit()
+        return coupon_type

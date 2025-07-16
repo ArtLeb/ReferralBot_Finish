@@ -127,8 +127,7 @@ class Company(Base):
     
     id_comp = Column(Integer, primary_key=True, autoincrement=True)
     Name_comp = Column(String(255), nullable=False, comment="Название компании")
-    owner_id = Column(Integer, nullable=False)  # ID владельца компании
-    category = Column(String(255))  # Категория компании
+
     
     # Отношения
     locations = relationship(

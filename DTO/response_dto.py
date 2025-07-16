@@ -290,3 +290,15 @@ class TagResponse(TagBase):
     """Расширенная схема тега"""
     # Для тегов обычно не требуется расширенная информация
     pass
+
+class CityBase(BaseModel):
+    """Схема для города"""
+    id: int
+    name: str
+    region: Optional[str] = None
+
+class CouponDetailsResponse(CouponBase):
+    """Расширенная схема купона с деталями"""
+    discount_amount: Decimal
+    commission_amount: Decimal
+    qr_code: str
