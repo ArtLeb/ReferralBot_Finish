@@ -73,7 +73,7 @@ class UserRoleBase(BaseModel):
     class Config:
         orm_mode = True
 
-# Новые DTO модели
+
 class ActionLogBase(BaseModel):
     """схема для логов действий"""
     id: int
@@ -112,7 +112,7 @@ class TagBase(BaseModel):
     class Config:
         orm_mode = True
 
-# Обновленная схема типа купона
+#  схема типа купона
 class CouponTypeBase(BaseModel):
     """ схема для типа купона"""
     id_coupon_type: int
@@ -125,7 +125,6 @@ class CouponTypeBase(BaseModel):
     usage_limit: int
     start_date: date
     end_date: date
-    # Новые поля
     company_agent_id: int
     location_agent_id: int
     days_for_used: int
@@ -288,7 +287,7 @@ class LocCatResponse(LocCatBase):
 
 class TagResponse(TagBase):
     """Расширенная схема тега"""
-    # Для тегов обычно не требуется расширенная информация
+    # Для тегов  не требуется расширенная информация
     pass
 
 class CityBase(BaseModel):

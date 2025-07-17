@@ -1,3 +1,4 @@
+# role_service.py
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date, timedelta
@@ -92,9 +93,13 @@ class RoleService:
         Returns:
             bool: True если разрешение есть
         """
-        # Суперпользователь (владелец бота) имеет все права
+        # Получаем пользователя по ID
         user = await self.session.get(User, user_id)
-        if user.id_tg == config.OWNER_ID:
+        if not user:
+            return False
+
+        # Если OWNER_ID задан и Telegram ID пользователя совпадает с OWNER_ID, то разрешаем всё
+        if config.OWNER_ID and user.id_tg == config.OWNER_ID:
             return True
         
         # Получаем роли пользователя

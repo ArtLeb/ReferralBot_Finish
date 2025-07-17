@@ -9,7 +9,7 @@ Base = declarative_base()
 
 # Создание асинхронного движка для подключения к MySQL
 engine = create_async_engine(
-    # Исправленная строка подключения для MySQL
+    #  строка подключения для MySQL
     f"mysql+aiomysql://{config.DB_USERNAME}:{config.DB_PASSWORD}"
     f"@{config.DB_HOST}:{config.DB_PORT}/{config.DB_NAME}",
     echo=True,          # Логирование SQL-запросов

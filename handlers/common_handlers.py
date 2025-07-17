@@ -1,3 +1,4 @@
+# common_handlers.py
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
@@ -5,7 +6,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.state import default_state
-from requests import session
 from utils.database.models import User
 from services.subscription_service import SubscriptionService
 from services.auth_service import AuthService
@@ -35,28 +35,29 @@ async def main_menu(session: AsyncSession, user: User) -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="Помощь"))
     
     # Кнопки для клиентов
-    if await role_service.has_permission(user, "get_coupons"):
+    # Передаем user.id (идентификатор пользователя) вместо объекта user
+    if await role_service.has_permission(user.id, "get_coupons"):
         builder.row(KeyboardButton(text="Получить купон"))
         builder.row(KeyboardButton(text="Мои купоны"))
     
     # Кнопки для партнеров и администраторов
-    if await role_service.has_permission(user, "view_stats"):
+    if await role_service.has_permission(user.id, "view_stats"):
         builder.row(KeyboardButton(text="Статистика"))
     
-    if await role_service.has_permission(user, "gen_coupons"):
+    if await role_service.has_permission(user.id, "gen_coupons"):
         builder.row(KeyboardButton(text="Сгенерировать купон"))
     
-    if await role_service.has_permission(user, "add_admins"):
+    if await role_service.has_permission(user.id, "add_admins"):
         builder.row(KeyboardButton(text="Мои администраторы"))
     
-    if await role_service.has_permission(user, "add_partners"):
+    if await role_service.has_permission(user.id, "add_partners"):
         builder.row(KeyboardButton(text="Добавить партнера"))
     
-    if await role_service.has_permission(user, "check_subscription"):
+    if await role_service.has_permission(user.id, "check_subscription"):
         builder.row(KeyboardButton(text="Проверить подписку"))
         builder.row(KeyboardButton(text="Активировать купон"))
     
-    if await role_service.has_permission(user, "manage_categories"):
+    if await role_service.has_permission(user.id, "manage_categories"):
         builder.row(KeyboardButton(text="Управление категориями"))
     
     return builder.as_markup(
@@ -109,7 +110,7 @@ async def client_selected(message: Message, session: AsyncSession, state: FSMCon
     await role_service.assign_role_to_user(
         user_id=user.id,
         role_name='client',
-        company_id=1  # ID системной компании
+        company_id=1  # ID системной компании, по умолчанию для всех новых пользователей которые выберут я клиент
     )
     await state.clear()
     await message.answer(
@@ -128,7 +129,7 @@ async def partner_selected(message: Message, state: FSMContext):
     )
 
 @router.message(RegistrationStates.COMPANY_NAME)
-async def process_company_name(message: Message, state: FSMContext):
+async def process_company_name(message: Message, state: FSMContext, session: AsyncSession):
     """Сохранение названия компании"""
     await state.update_data(company_name=message.text)
     await state.set_state(RegistrationStates.COMPANY_CATEGORY)

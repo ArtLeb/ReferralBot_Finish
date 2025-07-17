@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiogram import Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage  # Импорт хранилища состояний
+from aiogram.fsm.storage.memory import MemoryStorage  
 from utils.bot_obj import bot, dp
 from handlers import common_handlers, owner_handlers, partner_handlers, admin_handlers, client_handlers
 from middlewares import RoleMiddleware, SubscriptionMiddleware, DatabaseMiddleware
@@ -28,7 +28,6 @@ async def main():
     logger.info("Middlewares registered")
     
     # 4. Регистрация роутеров (обработчиков команд)
-    # Порядок не важен, но логично следовать от общего к частному
     dp.include_router(common_handlers.router)      # Общие команды (/start, помощь)
     dp.include_router(owner_handlers.router)       # Команды для владельцев
     dp.include_router(partner_handlers.router)     # Команды для партнеров
