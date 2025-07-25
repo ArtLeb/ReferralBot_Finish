@@ -4,7 +4,7 @@ from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage  
 from utils.bot_obj import bot, dp
 from handlers import common_handlers, owner_handlers, partner_handlers, admin_handlers, client_handlers
-from middlewares import RoleMiddleware, SubscriptionMiddleware, DatabaseMiddleware
+from middlewares import RoleMiddleware,  DatabaseMiddleware
 from utils.logger import setup_logger
 from utils.database import init_db
 
@@ -18,12 +18,12 @@ async def main():
     
     # 2. Инициализация базы данных
     await init_db()
-    logger.info("Database initialized")
+    #logger.info("Database initialized")
     
     # 3. Регистрация middleware
     dp.update.middleware(DatabaseMiddleware())  # Обеспечивает сессию БД
     dp.update.middleware(RoleMiddleware())      # Определяет роли пользователя
-    dp.update.middleware(SubscriptionMiddleware())  # Проверяет подписки
+    #dp.update.middleware(SubscriptionMiddleware())  # Проверяет подписки
     
     logger.info("Middlewares registered")
     

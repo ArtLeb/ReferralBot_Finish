@@ -1,4 +1,3 @@
-# role_service.py
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date, timedelta
@@ -9,8 +8,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 class RoleService:
-    """Сервис для управления ролями и разрешениями"""
-    # Карта разрешений для ролей
     PERMISSION_MAP = {
         'owner': [
             'manage_companies', 'manage_locations', 'add_partners',
@@ -21,7 +18,7 @@ class RoleService:
             'view_own_stats', 'add_agents'
         ],
         'admin': [
-            'activate_coupons', 'check_subscriptions', 'view_own_stats',
+            'activate_coupons', 'view_own_stats',
             'manage_coupons'
         ],
         'client': ['get_coupons', 'view_own_coupons']
@@ -32,80 +29,59 @@ class RoleService:
     
     async def assign_role_to_user(
         self,
-        user_id: int,
+        tg_id: int,
         role_name: str,
         company_id: int,
         location_id: int = None
     ) -> UserRole:
-        """
-        Назначает роль пользователю
-        Args:
-            user_id: ID пользователя
-            role_name: Название роли
-            company_id: ID компании
-            location_id: ID локации (опционально)
-        Returns:
-            UserRole: Созданная связь пользователь-роль
-        """
-        # Проверяем, есть ли уже такая роль
+        """Назначает роль пользователю по его Telegram ID"""
         stmt = select(UserRole).where(
-            (UserRole.user_id == user_id) &
+            (UserRole.user_id == tg_id) &
             (UserRole.role == role_name) &
             (UserRole.company_id == company_id)
         )
         existing = await self.session.scalar(stmt)
+        
         if existing:
             return existing
-        
-        # Создаем новую роль
+
         user_role = UserRole(
-            user_id=user_id,
+            user_id=tg_id,
             role=role_name,
             company_id=company_id,
             location_id=location_id,
             start_date=date.today(),
             end_date=date.today() + timedelta(days=365),
-            changed_by=user_id
+            changed_by=tg_id
         )
-        
+
         self.session.add(user_role)
         await self.session.commit()
         return user_role
-    
-    async def get_user_roles(self, user_id: int) -> list[UserRole]:
+        
+    async def get_user_roles(self, tg_id: int) -> list[UserRole]:
         """
-        Получает роли пользователя
+        Получает роли пользователя по его Telegram ID
         Args:
-            user_id: ID пользователя
+            tg_id: Telegram ID пользователя
         Returns:
-            list[UserRole]: Список ролей
+            list[UserRole]: Список ролей пользователя
         """
-        stmt = select(UserRole).where(UserRole.user_id == user_id)
+        stmt = select(UserRole).where(UserRole.user_id == tg_id)
         result = await self.session.execute(stmt)
         return result.scalars().all()
     
     async def has_permission(self, user_id: int, permission: str) -> bool:
-        """
-        Проверяет наличие разрешения у пользователя
-        Args:
-            user_id: ID пользователя
-            permission: Требуемое разрешение
-        Returns:
-            bool: True если разрешение есть
-        """
-        # Получаем пользователя по ID
+        """Проверяет наличие разрешения у пользователя"""
         user = await self.session.get(User, user_id)
         if not user:
             return False
-
-        # Если OWNER_ID задан и Telegram ID пользователя совпадает с OWNER_ID, то разрешаем всё
+        
         if config.OWNER_ID and user.id_tg == config.OWNER_ID:
             return True
         
-        # Получаем роли пользователя
         roles = await self.get_user_roles(user_id)
         
-        # Проверяем разрешения для каждой роли
         for role in roles:
             permissions = self.PERMISSION_MAP.get(role.role, [])
             if permission in permissions:

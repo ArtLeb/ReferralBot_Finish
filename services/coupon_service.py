@@ -1,26 +1,26 @@
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
-
 from sqlalchemy import select
 from repositories.coupon_repository import CouponRepository
 from utils.database.models import Coupon, CouponType, CouponStatus
-from services.group_service import GroupService
 
 class CouponService:
     """Сервис для работы с купонами"""
+    
     def __init__(self, session):
         self.session = session
         self.coupon_repo = CouponRepository(session)
-        self.group_service = GroupService(session)
     
     async def generate_coupon(self, issuer_id: int, client_id: int, coupon_type_id: int) -> Coupon:
         """
         Генерирует новый купон
+        
         Args:
             issuer_id: ID пользователя, выдающего купон
             client_id: ID клиента, получающего купон
             coupon_type_id: ID типа купона
+        
         Returns:
             Coupon: Созданный купон
         """
@@ -29,10 +29,7 @@ class CouponService:
         if not coupon_type:
             raise ValueError("Тип купона не найден")
         
-        # Проверка подписки на группы (если требуется)
-        if coupon_type.require_all_groups:
-            if not await self.group_service.check_user_subscription(client_id, coupon_type_id):
-                raise ValueError("Пользователь не подписан на все требуемые группы")
+        # Убрана проверка подписки на группы (временно)
         
         # Генерация уникального кода
         code = f"{coupon_type.code_prefix}-{uuid.uuid4().hex[:8].upper()}"
@@ -55,10 +52,12 @@ class CouponService:
     async def redeem_coupon(self, coupon_code: str, redeemed_by: int, amount: Decimal) -> Coupon:
         """
         Активирует (погашает) купон
+        
         Args:
             coupon_code: Код купона
             redeemed_by: ID пользователя, активировавшего купон
             amount: Сумма покупки
+        
         Returns:
             Coupon: Обновленный купон
         """
@@ -88,8 +87,10 @@ class CouponService:
     async def get_user_coupons(self, user_id: int) -> list[Coupon]:
         """
         Получает купоны пользователя
+        
         Args:
             user_id: ID пользователя
+        
         Returns:
             list[Coupon]: Список купонов
         """
@@ -108,10 +109,12 @@ class CouponService:
     ) -> CouponType:
         """
         Создает новый тип купона
+        
         Args:
             company_id: ID компании
             discount_percent: Процент скидки
             days_valid: Срок действия в днях
+        
         Returns:
             CouponType: Созданный тип купона
         """

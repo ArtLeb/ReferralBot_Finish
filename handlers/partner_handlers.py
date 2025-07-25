@@ -16,10 +16,10 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 @router.message(F.text == "Мои компании")
-async def list_companies(message: Message, session: AsyncSession):
+async def list_companies(message: Message, session: AsyncSession, user: User):
     """Просмотр списка компаний партнера"""
     service = CompanyService(session)
-    companies = await service.get_user_companies(message.from_user.id)
+    companies = await service.get_user_companies(user.id_tg)
     
     if not companies:
         await message.answer("У вас пока нет компаний")
@@ -41,7 +41,7 @@ async def select_company(callback: CallbackQuery, state: FSMContext, session: As
         await callback.answer("Компания не найдена")
         return
     
-    await state.update_data(company_id=company_id)
+    await state.update_data(company_id=company_id, company_name=company.Name_comp)
     company_info = (
         f"🏢 Компания: {company.Name_comp}\n"
         f"📍 Локаций: {len(company.locations)}"
@@ -78,7 +78,7 @@ async def manage_locations(message: Message, state: FSMContext, session: AsyncSe
     )
 
 @router.message(F.text == "Сгенерировать купон")
-async def generate_coupon(message: Message, state: FSMContext, session: AsyncSession):
+async def generate_coupon(message: Message, state: FSMContext, session: AsyncSession, user: User):
     """Генерация нового купона"""
     data = await state.get_data()
     company_id = data.get('company_id')
@@ -87,7 +87,18 @@ async def generate_coupon(message: Message, state: FSMContext, session: AsyncSes
         await message.answer("❌ Сначала выберите компанию")
         return
     
+    # Получаем первую локацию компании
+    service = CompanyService(session)
+    locations = await service.get_locations_by_company(company_id)
+    
+    if not locations:
+        await message.answer("❌ У компании нет локаций")
+        return
+    
+    location_id = locations[0].id_location
+    
     await state.set_state(PartnerStates.generate_coupon_type)
+    await state.update_data(location_id=location_id)
     await message.answer("Введите процент скидки для купона:")
 
 @router.message(PartnerStates.generate_coupon_type)
@@ -100,15 +111,18 @@ async def process_coupon_discount(message: Message, state: FSMContext, session: 
         
         data = await state.get_data()
         company_id = data.get('company_id')
+        location_id = data.get('location_id')
         
         coupon_service = CouponService(session)
         coupon = await coupon_service.create_coupon_type(
             company_id=company_id,
+            location_id=location_id, 
             discount_percent=discount
         )
         
         await message.answer(f"✅ Тип купона создан! Префикс: {coupon.code_prefix}")
         await state.clear()
+    
     except ValueError:
         await message.answer("❌ Введите число от 1 до 100")
     except Exception as e:

@@ -1,19 +1,16 @@
-# common_handlers.py
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command, StateFilter
-from aiogram.fsm.state import default_state
-from utils.database.models import User
-from services.subscription_service import SubscriptionService
+from aiogram.filters import Command
 from services.auth_service import AuthService
 from services.role_service import RoleService
 from services.company_service import CompanyService
 from services.category_service import CategoryService
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
+from utils.database.models import LocCat
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -25,22 +22,17 @@ class RegistrationStates(StatesGroup):
     CITY_SELECTION = State()
     COMPANY_ADDRESS = State()
 
-async def main_menu(session: AsyncSession, user: User) -> ReplyKeyboardMarkup:
+async def main_menu(session: AsyncSession, user) -> ReplyKeyboardMarkup:
     """Создает главное меню в зависимости от роли пользователя"""
     builder = ReplyKeyboardBuilder()
-    role_service = RoleService(session)
-    
-    # Кнопки для всех пользователей
     builder.row(KeyboardButton(text="Мой профиль"))
     builder.row(KeyboardButton(text="Помощь"))
     
-    # Кнопки для клиентов
-    # Передаем user.id (идентификатор пользователя) вместо объекта user
+    role_service = RoleService(session)
     if await role_service.has_permission(user.id, "get_coupons"):
         builder.row(KeyboardButton(text="Получить купон"))
         builder.row(KeyboardButton(text="Мои купоны"))
     
-    # Кнопки для партнеров и администраторов
     if await role_service.has_permission(user.id, "view_stats"):
         builder.row(KeyboardButton(text="Статистика"))
     
@@ -65,7 +57,7 @@ async def main_menu(session: AsyncSession, user: User) -> ReplyKeyboardMarkup:
         input_field_placeholder="Выберите действие из меню"
     )
 
-@router.message(F.text == "/start")
+@router.message(Command("start"))
 async def start(message: Message, session: AsyncSession, state: FSMContext):
     """Обработчик команды /start с регистрацией пользователя"""
     auth_service = AuthService(session)
@@ -76,7 +68,7 @@ async def start(message: Message, session: AsyncSession, state: FSMContext):
     )
     
     role_service = RoleService(session)
-    user_roles = await role_service.get_user_roles(user.id)
+    user_roles = await role_service.get_user_roles(user.id_tg)
     
     if user_roles:
         await message.answer(
@@ -94,23 +86,14 @@ async def start(message: Message, session: AsyncSession, state: FSMContext):
             reply_markup=builder.as_markup(resize_keyboard=True)
         )
 
-@router.message(Command("cancel"), ~StateFilter(default_state))
-async def cancel_registration(message: Message, state: FSMContext):
-    """Отмена процесса регистрации"""
-    await state.clear()
-    await message.answer(
-        "❌ Регистрация отменена",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
 @router.message(RegistrationStates.CHOOSING_ROLE, F.text == "Я клиент")
-async def client_selected(message: Message, session: AsyncSession, state: FSMContext, user: User):
+async def client_selected(message: Message, session: AsyncSession, state: FSMContext, user):
     """Обработчик выбора роли клиента"""
     role_service = RoleService(session)
     await role_service.assign_role_to_user(
-        user_id=user.id,
+        tg_id=user.id_tg,
         role_name='client',
-        company_id=1  # ID системной компании, по умолчанию для всех новых пользователей которые выберут я клиент
+        company_id=1  # ID системной компании
     )
     await state.clear()
     await message.answer(
@@ -143,6 +126,7 @@ async def process_company_name(message: Message, state: FSMContext, session: Asy
         await state.clear()
         return
     
+    # Создание клавиатуры с категориями
     builder = ReplyKeyboardBuilder()
     for category in categories:
         builder.add(KeyboardButton(text=category.name))
@@ -165,36 +149,47 @@ async def process_company_category(message: Message, state: FSMContext, session:
 
 @router.message(RegistrationStates.CITY_SELECTION)
 async def process_city(message: Message, state: FSMContext):
-    """Сохранение города компании"""
+    """Сохранение города компании и запрос адреса"""
     await state.update_data(city=message.text)
     await state.set_state(RegistrationStates.COMPANY_ADDRESS)
     await message.answer("Введите адрес компании:")
 
 @router.message(RegistrationStates.COMPANY_ADDRESS)
-async def process_company_address(message: Message, state: FSMContext, session: AsyncSession, user: User):
-    """Завершение регистрации компании"""
+async def process_company_address(message: Message, state: FSMContext, session: AsyncSession, user):
+    """Завершение регистрации компании с гарантией создания локации"""
     data = await state.get_data()
     company_service = CompanyService(session)
     
     try:
+        # Создаем компанию
         company = await company_service.create_company(
-            name=data['company_name'],
-            category_id=data['company_category_id'],
-            owner_id=user.id
+            name=data['company_name']
         )
         
+        # Гарантированно создаем локацию
         location = await company_service.create_location(
             company_id=company.id_comp,
             city=data['city'],
-            address=message.text
+            address=message.text,
+            name_loc=data['company_name']  # Используем название компании
         )
         
+        # Связываем категорию с локацией
+        loc_cat = LocCat(
+            comp_id=company.id_comp,
+            id_location=location.id_location,
+            id_category=data['company_category_id']
+        )
+        session.add(loc_cat)
+        await session.commit()
+        
+        # Назначаем роль партнера используя telegram ID
         role_service = RoleService(session)
         await role_service.assign_role_to_user(
-            user_id=user.id,
+            tg_id=user.id_tg,  # Передаем telegram ID
             role_name='partner',
             company_id=company.id_comp,
-            location_id=location.id_location
+            location_id=location.id_location  # Гарантированно передаем ID локации
         )
         
         await state.clear()
@@ -202,15 +197,17 @@ async def process_company_address(message: Message, state: FSMContext, session: 
             f"✅ Компания {company.Name_comp} успешно зарегистрирована!",
             reply_markup=await main_menu(session, user)
         )
+    
     except Exception as e:
         logger.error(f"Ошибка регистрации компании: {e}")
+        await session.rollback()
         await message.answer("⚠️ Произошла ошибка при регистрации компании. Попробуйте позже.")
 
 @router.message(F.text == "Мой профиль")
-async def my_profile(message: Message, session: AsyncSession, user: User):
+async def my_profile(message: Message, session: AsyncSession, user):
     """Отображение профиля пользователя"""
     role_service = RoleService(session)
-    user_roles = await role_service.get_user_roles(user.id)
+    user_roles = await role_service.get_user_roles(user.id_tg)
     
     roles_info = "\n".join([
         f"- {role.role} в компании ID {role.company_id}"
@@ -226,14 +223,6 @@ async def my_profile(message: Message, session: AsyncSession, user: User):
         f"🔑 <b>Ваши роли:</b>\n{roles_info}"
     )
     await message.answer(profile_text, parse_mode="HTML")
-
-@router.message(F.text == "Проверить подписку")
-async def check_subscription_command(message: Message, session: AsyncSession, user: User):
-    """Проверка статуса подписки"""
-    subscription_service = SubscriptionService(session, RoleService(session))
-    has_subscription = await subscription_service.check_subscription(user.id)
-    response = "✅ У вас есть активная подписка!" if has_subscription else "❌ У вас нет активной подписки."
-    await message.answer(response)
 
 @router.message(F.text == "Помощь")
 async def help_command(message: Message):

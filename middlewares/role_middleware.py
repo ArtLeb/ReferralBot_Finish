@@ -9,17 +9,38 @@ import logging
 logger = logging.getLogger(__name__)
 
 class RoleMiddleware(BaseMiddleware):
+    """
+    Middleware для управления ролями и разрешениями пользователей.
+    
+    Основные функции:
+    1. Определяет пользователя из входящего события
+    2. Загружает полную информацию о пользователе из БД
+    3. Проверяет наличие необходимых разрешений для обработчика
+    4. Блокирует выполнение при отсутствии прав
+    
+    Принцип работы:
+    - Для каждого входящего обновления (сообщение, callback и т.д.)
+    - Получает Telegram ID пользователя
+    - Загружает соответствующую запись из таблицы USERS
+    - Проверяет атрибут __required_permission__ обработчика
+    - Если разрешение требуется, проверяет его через RoleService
+    
+    Особенности:
+    - Для системного владельца (OWNER_ID) всегда разрешает все действия
+    - Сохраняет объект пользователя в контексте (data['user'])
+    """
+    
     async def __call__(
         self,
         handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: Dict[str, Any]
     ) -> Any:
-        # Проверяем тип события
+        # 1. Проверяем тип события - работаем только с Update
         if not isinstance(event, Update):
             return await handler(event, data)
         
-        # Определяем пользователя в зависимости от типа обновления
+        # 2. Определяем пользователя в зависимости от типа обновления
         user = None
         if event.message:
             user = event.message.from_user
@@ -31,41 +52,46 @@ class RoleMiddleware(BaseMiddleware):
         if not user:
             return await handler(event, data)
         
-        # Получаем сессию из данных
+        # 3. Получаем сессию БД из контекста
         session: AsyncSession = data.get('session')
         if not session:
             logger.error("Сессия БД не найдена в middleware")
             return await handler(event, data)
         
-        # Инициализируем сервисы
+        # 4. Инициализируем сервисы
         role_service = RoleService(session)
         user_service = UserService(session)
         
-        # Получаем полную информацию о пользователе из БД
+        # 5. Загружаем пользователя из БД по Telegram ID
         db_user = await user_service.get_user_by_tg_id(user.id)
         if not db_user:
             logger.warning(f"Пользователь TG ID {user.id} не найден в БД")
             return await handler(event, data)
         
-        # Сохраняем пользователя в контексте
+        # 6. Сохраняем пользователя в контексте для использования в хэндлерах
         data['user'] = db_user
         data['db_user'] = db_user
         
-        # Проверяем разрешения обработчика
+        # 7. Проверяем разрешения обработчика
         required_permission = getattr(handler, '__required_permission__', None)
-        if required_permission:
-            # Проверяем наличие разрешения
-            has_permission = await role_service.has_permission(db_user, required_permission)
-            
-            if not has_permission:
-                logger.warning(
-                    f"У пользователя {db_user.id} нет прав {required_permission} "
-                    f"для обработчика {handler.__name__}"
-                )
-                
-                # Отправляем сообщение только если это Message
-                if event.message:
-                    await event.message.answer("⛔ У вас недостаточно прав для выполнения этой операции")
-                return
         
+        # Если разрешение не требуется - пропускаем проверку
+        if not required_permission:
+            return await handler(event, data)
+        
+        # 8. Проверяем наличие разрешения у пользователя
+        has_permission = await role_service.has_permission(db_user.id, required_permission)
+        
+        if not has_permission:
+            logger.warning(
+                f"У пользователя {db_user.id} нет прав {required_permission} "
+                f"для обработчика {handler.__name__}"
+            )
+            
+            # 9. Отправляем сообщение только для Message событий
+            if event.message:
+                await event.message.answer("⛔ У вас недостаточно прав для выполнения этой операции")
+            return
+        
+        # 10. Если все проверки пройдены - выполняем обработчик
         return await handler(event, data)

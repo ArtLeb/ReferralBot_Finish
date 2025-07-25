@@ -3,7 +3,7 @@ from sqlalchemy import select, func
 from datetime import date
 import csv
 from io import StringIO
-from utils.database.models import User, Company, Coupon, Subscription
+from utils.database.models import User, Company, Coupon
 
 class ReportService:
     """Сервис для генерации отчетов"""
@@ -29,22 +29,9 @@ class ReportService:
             .where(Coupon.status_id == 2)  # Статус "использован"
         )
         
-        # Подписки
-        active_subscriptions = await self.session.scalar(
-            select(func.count(Subscription.id_subscription))
-            .where(
-                Subscription.is_active == True,
-                Subscription.end_date >= date.today()
-            )
-        )
+
         
-        return {
-            'total_users': users_count or 0,
-            'total_companies': companies_count or 0,
-            'total_coupons': coupons_count or 0,
-            'used_coupons': used_coupons or 0,
-            'active_subscriptions': active_subscriptions or 0
-        }
+
     
     async def generate_coupons_report(self):
         """

@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from utils.database.models import User, UserRole
-from datetime import date
+from datetime import date, datetime
 
 class UserRepository:
     """Репозиторий для работы с пользователями"""
@@ -38,7 +38,13 @@ class UserRepository:
         Returns:
             User: Созданный пользователь
         """
-        user = User(**user_data)
+        user = User(
+            id_tg=user_data['id_tg'],  # Исправлено: было 'tg_id'
+            first_name=user_data['first_name'],
+            last_name=user_data['last_name'],
+            tel_num=user_data.get('tel_num', ''),  # Безопасное получение
+            reg_date=user_data.get('reg_date', datetime.now().date()),  # Значение по умолчанию
+        )
         self.session.add(user)
         await self.session.commit()
         await self.session.refresh(user)

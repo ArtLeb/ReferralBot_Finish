@@ -44,32 +44,27 @@ async def process_company_id(message: Message, state: FSMContext, session: Async
     except ValueError:
         await message.answer("❌ Некорректный ID компании. Введите число")
 
+
 @router.message(AddPartnerStates.waiting_for_location_id)
 async def process_location_id(message: Message, state: FSMContext, session: AsyncSession):
-    """Завершение добавления партнера"""
+    """Завершение добавления партнера с использованием tg_id"""
     try:
         location_id = int(message.text) if message.text != "0" else None
         user_data = await state.get_data()
         tg_id = user_data['tg_id']
         company_id = user_data['company_id']
         
-        user_service = UserService(session)
+        # Назначаем роль используя telegram ID
         role_service = RoleService(session)
-        
-        user = await user_service.get_user_by_tg_id(tg_id)
-        if not user:
-            await message.answer(f"❌ Пользователь с ID {tg_id} не найден")
-            await state.clear()
-            return
-        
         await role_service.assign_role_to_user(
-            user_id=user.id,
+            tg_id=tg_id,  # Используем telegram ID
             role_name='partner',
             company_id=company_id,
             location_id=location_id
         )
         
-        await message.answer(f"✅ Пользователь {user.first_name} добавлен как партнер")
+        await message.answer(f"✅ Пользователь добавлен как партнер")
+
     except ValueError:
         await message.answer("❌ Некорректный ID локации. Введите число или 0")
     except Exception as e:
@@ -96,7 +91,7 @@ async def view_stats(message: Message, session: AsyncSession, user: User):
             f"🏢 Компаний: {stats['total_companies']}\n"
             f"🎫 Купонов: {stats['total_coupons']}\n"
             f"✅ Активировано: {stats['used_coupons']}\n"
-            f"📅 Активных подписок: {stats['active_subscriptions']}"
+            
         )
         
         await message.answer(response)
