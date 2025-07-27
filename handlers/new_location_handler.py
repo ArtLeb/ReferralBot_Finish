@@ -14,7 +14,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-@router.message(F.text == '➕ Добавить Локацию')
+@router.message(F.text == 'Добавить Локацию')
 async def start_create_new_location(message: Message, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
     await message.answer(
@@ -25,7 +25,7 @@ async def start_create_new_location(message: Message, state: FSMContext, session
     await state.set_state(CreateLocationStates.get_comp_name)
 
 
-@router.message(CreateLocationStates.get_comp_name, F.text == '➕ Добавить Локацию')
+@router.message(CreateLocationStates.get_comp_name, F.text == 'Добавить Локацию')
 async def start_create_new_location(message: Message, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
     await message.answer(

@@ -1,12 +1,10 @@
 import asyncio
-import logging
-from aiogram import Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage  
 from utils.bot_obj import bot, dp
-from handlers import common_handlers, owner_handlers, partner_handlers, admin_handlers, client_handlers
-from middlewares import RoleMiddleware,  DatabaseMiddleware
+from handlers import (common_handlers, owner_handlers, partner_handlers,
+                      admin_handlers, client_handlers, command_handler, edit_company_handler,
+                      new_location_handler, collaboration_handler, collab_coupon_handler, tg_group_handlers)
+from middlewares import DatabaseMiddleware
 from utils.logger import setup_logger
-from utils.database import init_db
 
 async def main():
     """
@@ -17,22 +15,26 @@ async def main():
     logger.info("Starting bot")
     
     # 2. Инициализация базы данных
-    await init_db()
-    #logger.info("Database initialized")
+    logger.info("Database initialized")
     
     # 3. Регистрация middleware
     dp.update.middleware(DatabaseMiddleware())  # Обеспечивает сессию БД
-    dp.update.middleware(RoleMiddleware())      # Определяет роли пользователя
-    #dp.update.middleware(SubscriptionMiddleware())  # Проверяет подписки
-    
+    # dp.update.middleware(RoleMiddleware())      # Определяет роли пользователя
+
     logger.info("Middlewares registered")
     
     # 4. Регистрация роутеров (обработчиков команд)
-    dp.include_router(common_handlers.router)      # Общие команды (/start, помощь)
-    dp.include_router(owner_handlers.router)       # Команды для владельцев
-    dp.include_router(partner_handlers.router)     # Команды для партнеров
-    dp.include_router(admin_handlers.router)       # Команды для администраторов
-    dp.include_router(client_handlers.router)      # Команды для клиентов
+    dp.include_router(command_handler.router)
+    dp.include_router(common_handlers.router)
+    dp.include_router(edit_company_handler.router)
+    dp.include_router(collaboration_handler.router)
+    dp.include_router(collab_coupon_handler.router)
+    dp.include_router(new_location_handler.router)
+    dp.include_router(owner_handlers.router)
+    dp.include_router(partner_handlers.router)
+    dp.include_router(admin_handlers.router)
+    dp.include_router(client_handlers.router)
+    dp.include_router(tg_group_handlers.router)
     
     logger.info("Routers registered")
     

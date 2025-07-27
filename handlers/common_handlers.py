@@ -1,105 +1,36 @@
+# common_handlers.py
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.types import Message, ReplyKeyboardRemove, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command
-from services.auth_service import AuthService
+from utils.database.models import User
 from services.role_service import RoleService
 from services.company_service import CompanyService
 from services.category_service import CategoryService
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
-from utils.database.models import LocCat
+
+from utils.keyboards import main_menu, loc_categories_keyboard
+from utils.states import RegistrationStates
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-class RegistrationStates(StatesGroup):
-    CHOOSING_ROLE = State()
-    COMPANY_NAME = State()
-    COMPANY_CATEGORY = State()
-    CITY_SELECTION = State()
-    COMPANY_ADDRESS = State()
-
-async def main_menu(session: AsyncSession, user) -> ReplyKeyboardMarkup:
-    """Создает главное меню в зависимости от роли пользователя"""
-    builder = ReplyKeyboardBuilder()
-    builder.row(KeyboardButton(text="Мой профиль"))
-    builder.row(KeyboardButton(text="Помощь"))
-    
-    role_service = RoleService(session)
-    if await role_service.has_permission(user.id, "get_coupons"):
-        builder.row(KeyboardButton(text="Получить купон"))
-        builder.row(KeyboardButton(text="Мои купоны"))
-    
-    if await role_service.has_permission(user.id, "view_stats"):
-        builder.row(KeyboardButton(text="Статистика"))
-    
-    if await role_service.has_permission(user.id, "gen_coupons"):
-        builder.row(KeyboardButton(text="Сгенерировать купон"))
-    
-    if await role_service.has_permission(user.id, "add_admins"):
-        builder.row(KeyboardButton(text="Мои администраторы"))
-    
-    if await role_service.has_permission(user.id, "add_partners"):
-        builder.row(KeyboardButton(text="Добавить партнера"))
-    
-    if await role_service.has_permission(user.id, "check_subscription"):
-        builder.row(KeyboardButton(text="Проверить подписку"))
-        builder.row(KeyboardButton(text="Активировать купон"))
-    
-    if await role_service.has_permission(user.id, "manage_categories"):
-        builder.row(KeyboardButton(text="Управление категориями"))
-    
-    return builder.as_markup(
-        resize_keyboard=True,
-        input_field_placeholder="Выберите действие из меню"
-    )
-
-@router.message(Command("start"))
-async def start(message: Message, session: AsyncSession, state: FSMContext):
-    """Обработчик команды /start с регистрацией пользователя"""
-    auth_service = AuthService(session)
-    user = await auth_service.get_or_create_user(
-        tg_id=message.from_user.id,
-        first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name or ""
-    )
-    
-    role_service = RoleService(session)
-    user_roles = await role_service.get_user_roles(user.id_tg)
-    
-    if user_roles:
-        await message.answer(
-            "👋 Добро пожаловать в ReferralBot!",
-            reply_markup=await main_menu(session, user)
-        )
-    else:
-        await state.set_state(RegistrationStates.CHOOSING_ROLE)
-        builder = ReplyKeyboardBuilder()
-        builder.row(KeyboardButton(text="Я клиент"))
-        builder.row(KeyboardButton(text="Я партнер (компания)"))
-        await message.answer(
-            "👋 Добро пожаловать! Пожалуйста, выберите тип вашего аккаунта:\n\n"
-            "ℹ️ Один пользователь может создать до 5 компаний",
-            reply_markup=builder.as_markup(resize_keyboard=True)
-        )
 
 @router.message(RegistrationStates.CHOOSING_ROLE, F.text == "Я клиент")
-async def client_selected(message: Message, session: AsyncSession, state: FSMContext, user):
+async def client_selected(message: Message, session: AsyncSession, state: FSMContext, user: User):
     """Обработчик выбора роли клиента"""
     role_service = RoleService(session)
     await role_service.assign_role_to_user(
-        tg_id=user.id_tg,
+        user_id=message.from_user.id,
         role_name='client',
-        company_id=1  # ID системной компании
+        company_id=1  # ID системной компании, по умолчанию для всех новых пользователей которые выберут я клиент
     )
     await state.clear()
     await message.answer(
         "✅ Вы зарегистрированы как клиент!",
         reply_markup=await main_menu(session, user)
     )
+
 
 @router.message(RegistrationStates.CHOOSING_ROLE, F.text == "Я партнер (компания)")
 async def partner_selected(message: Message, state: FSMContext):
@@ -111,109 +42,137 @@ async def partner_selected(message: Message, state: FSMContext):
         reply_markup=ReplyKeyboardRemove()
     )
 
+
 @router.message(RegistrationStates.COMPANY_NAME)
-async def process_company_name(message: Message, state: FSMContext, session: AsyncSession):
-    """Сохранение названия компании"""
+async def start_create_new_location(message: Message, state: FSMContext, session: AsyncSession):
     await state.update_data(company_name=message.text)
-    await state.set_state(RegistrationStates.COMPANY_CATEGORY)
-    
-    # Получение списка категорий
     category_service = CategoryService(session)
     categories = await category_service.get_all_categories()
-    
-    if not categories:
-        await message.answer("⚠️ Категории не найдены. Обратитесь к администратору.")
-        await state.clear()
-        return
-    
-    # Создание клавиатуры с категориями
-    builder = ReplyKeyboardBuilder()
-    for category in categories:
-        builder.add(KeyboardButton(text=category.name))
-    builder.adjust(2)
-    await message.answer("Выберите категорию компании:", reply_markup=builder.as_markup(resize_keyboard=True))
+    keyboard = loc_categories_keyboard(categories, selected_category=[])
+    await message.answer(
+        text=f"✍️ Введите Категории",
+        reply_markup=keyboard
+    )
+    await state.update_data(selected_category=[], current_page=0)
+    await state.set_state(RegistrationStates.COMPANY_CATEGORY_RECORD)
 
-@router.message(RegistrationStates.COMPANY_CATEGORY)
-async def process_company_category(message: Message, state: FSMContext, session: AsyncSession):
-    """Обработка выбора категории компании"""
-    category_service = CategoryService(session)
-    category = await category_service.get_category_by_name(message.text)
-    
-    if not category:
-        await message.answer("❌ Пожалуйста, выберите категорию из списка:")
-        return
-    
-    await state.update_data(company_category_id=category.id)
-    await state.set_state(RegistrationStates.CITY_SELECTION)
-    await message.answer("Введите город расположения компании:", reply_markup=ReplyKeyboardRemove())
+
+@router.callback_query(RegistrationStates.COMPANY_CATEGORY_RECORD)
+async def process_company_name(cb: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Обработка выбора категорий и пагинации"""
+    data = await state.get_data()
+    selected_category: list = data.get('selected_category', [])
+    current_page: int = data.get('current_page', 0)
+
+    if cb.data.startswith('category_'):
+        category_id = int(cb.data.split('_')[1])
+        if category_id in selected_category:
+            selected_category.remove(category_id)
+        else:
+            selected_category.append(category_id)
+
+        await state.update_data(selected_category=selected_category)
+
+        category_service = CategoryService(session)
+        categories = await category_service.get_all_categories()
+        keyboard = loc_categories_keyboard(categories, selected_category, current_page)
+
+        await cb.message.edit_reply_markup(reply_markup=keyboard)
+
+    elif cb.data.startswith('page_'):
+        new_page = int(cb.data.split('_')[1])
+        await state.update_data(current_page=new_page)
+
+        category_service = CategoryService(session)
+        categories = await category_service.get_all_categories()
+        keyboard = loc_categories_keyboard(categories, selected_category, new_page)
+
+        await cb.message.edit_reply_markup(reply_markup=keyboard)
+
+    elif cb.data == 'add_category':
+        if not selected_category:
+            await cb.answer(text="Выберите хотя бы одну категорию!", show_alert=True)
+            return
+
+        await cb.message.answer(text="💾 Категории компании успешно сохранены")
+        await cb.message.delete()
+        await cb.message.answer(text="Введите город расположения компании:")
+        await state.set_state(RegistrationStates.CITY_SELECTION)
+    elif cb.data == 'noop':
+        await cb.answer()
+
 
 @router.message(RegistrationStates.CITY_SELECTION)
 async def process_city(message: Message, state: FSMContext):
-    """Сохранение города компании и запрос адреса"""
+    """Сохранение города компании"""
     await state.update_data(city=message.text)
-    await state.set_state(RegistrationStates.COMPANY_ADDRESS)
+    await state.set_state(RegistrationStates.COMPANY_ADDRESS_URL)
     await message.answer("Введите адрес компании:")
 
+
+@router.message(RegistrationStates.COMPANY_ADDRESS_URL)
+async def process_city(message: Message, state: FSMContext):
+    """Сохранение Ссылки компании"""
+    await state.update_data(address=message.text)
+    await state.set_state(RegistrationStates.COMPANY_ADDRESS)
+    await message.answer("Введите Сслыку на картах:")
+
+
 @router.message(RegistrationStates.COMPANY_ADDRESS)
-async def process_company_address(message: Message, state: FSMContext, session: AsyncSession, user):
-    """Завершение регистрации компании с гарантией создания локации"""
+async def process_company_address(message: Message, state: FSMContext, session: AsyncSession):
+    """Завершение регистрации компании"""
     data = await state.get_data()
     company_service = CompanyService(session)
-    
+
     try:
-        # Создаем компанию
         company = await company_service.create_company(
-            name=data['company_name']
+            name=data['company_name'],
+            owner_id=message.from_user.id
         )
-        
-        # Гарантированно создаем локацию
+
         location = await company_service.create_location(
             company_id=company.id_comp,
             city=data['city'],
-            address=message.text,
-            name_loc=data['company_name']  # Используем название компании
+            address=data['address'],
+            map_url=message.text,
+            name_loc=data['company_name']
         )
-        
-        # Связываем категорию с локацией
-        loc_cat = LocCat(
-            comp_id=company.id_comp,
-            id_location=location.id_location,
-            id_category=data['company_category_id']
-        )
-        session.add(loc_cat)
-        await session.commit()
-        
-        # Назначаем роль партнера используя telegram ID
+        for category_id in data.get('selected_category', []):
+            await company_service.set_loc_category(
+                comp_id=company.id_comp,
+                id_location=location.id_location,
+                id_category=category_id
+            )
+
         role_service = RoleService(session)
         await role_service.assign_role_to_user(
-            tg_id=user.id_tg,  # Передаем telegram ID
+            user_id=message.from_user.id,
             role_name='partner',
             company_id=company.id_comp,
-            location_id=location.id_location  # Гарантированно передаем ID локации
+            location_id=location.id_location
         )
-        
+
         await state.clear()
         await message.answer(
             f"✅ Компания {company.Name_comp} успешно зарегистрирована!",
-            reply_markup=await main_menu(session, user)
+            reply_markup=await main_menu(session, message.from_user.id)
         )
-    
     except Exception as e:
         logger.error(f"Ошибка регистрации компании: {e}")
-        await session.rollback()
         await message.answer("⚠️ Произошла ошибка при регистрации компании. Попробуйте позже.")
 
+
 @router.message(F.text == "Мой профиль")
-async def my_profile(message: Message, session: AsyncSession, user):
+async def my_profile(message: Message, session: AsyncSession, user: User):
     """Отображение профиля пользователя"""
     role_service = RoleService(session)
-    user_roles = await role_service.get_user_roles(user.id_tg)
-    
+    user_roles = await role_service.get_user_roles(user.id)
+
     roles_info = "\n".join([
         f"- {role.role} в компании ID {role.company_id}"
         for role in user_roles
     ]) if user_roles else "Нет назначенных ролей"
-    
+
     profile_text = (
         f"👤 <b>Ваш профиль</b>\n"
         f"▫️ ID: {user.id}\n"
@@ -223,6 +182,7 @@ async def my_profile(message: Message, session: AsyncSession, user):
         f"🔑 <b>Ваши роли:</b>\n{roles_info}"
     )
     await message.answer(profile_text, parse_mode="HTML")
+
 
 @router.message(F.text == "Помощь")
 async def help_command(message: Message):

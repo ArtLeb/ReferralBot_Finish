@@ -9,14 +9,14 @@ from io import BytesIO
 router = Router()
 
 @router.message(F.text == "Получить купон")
-async def get_coupon(message: Message, user: User, session: AsyncSession):
+async def get_coupon(message: Message, session: AsyncSession):
     """Генерация нового купона для клиента"""
     coupon_service = CouponService(session)
     
     try:
         coupon = await coupon_service.generate_coupon(
             issuer_id=1,  # Системный пользователь
-            client_id=user.id,
+            client_id=message.from_user.id,
             coupon_type_id=1  # Базовый тип купона
         )
         
@@ -47,10 +47,10 @@ async def get_coupon(message: Message, user: User, session: AsyncSession):
         await message.answer("❌ Не удалось создать купон. Попробуйте позже.")
 
 @router.message(F.text == "Мои купоны")
-async def my_coupons(message: Message, user: User, session: AsyncSession):
+async def my_coupons(message: Message, session: AsyncSession):
     """Просмотр активных купонов пользователя"""
     coupon_service = CouponService(session)
-    coupons = await coupon_service.get_user_coupons(user.id)
+    coupons = await coupon_service.get_user_coupons(message.from_user.id)
     
     if not coupons:
         await message.answer("📭 У вас пока нет активных купонов")

@@ -4,7 +4,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from services.role_service import RoleService
 from services.user_service import UserService
-from services.report_service import ReportService
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.database.models import User
 from typing import Optional
@@ -44,27 +43,32 @@ async def process_company_id(message: Message, state: FSMContext, session: Async
     except ValueError:
         await message.answer("❌ Некорректный ID компании. Введите число")
 
-
 @router.message(AddPartnerStates.waiting_for_location_id)
 async def process_location_id(message: Message, state: FSMContext, session: AsyncSession):
-    """Завершение добавления партнера с использованием tg_id"""
+    """Завершение добавления партнера"""
     try:
         location_id = int(message.text) if message.text != "0" else None
         user_data = await state.get_data()
         tg_id = user_data['tg_id']
         company_id = user_data['company_id']
         
-        # Назначаем роль используя telegram ID
+        user_service = UserService(session)
         role_service = RoleService(session)
+        
+        user = await user_service.get_user_by_tg_id(tg_id)
+        if not user:
+            await message.answer(f"❌ Пользователь с ID {tg_id} не найден")
+            await state.clear()
+            return
+        
         await role_service.assign_role_to_user(
-            tg_id=tg_id,  # Используем telegram ID
+            user_id=user.id,
             role_name='partner',
             company_id=company_id,
             location_id=location_id
         )
         
-        await message.answer(f"✅ Пользователь добавлен как партнер")
-
+        await message.answer(f"✅ Пользователь {user.first_name} добавлен как партнер")
     except ValueError:
         await message.answer("❌ Некорректный ID локации. Введите число или 0")
     except Exception as e:
@@ -91,7 +95,7 @@ async def view_stats(message: Message, session: AsyncSession, user: User):
             f"🏢 Компаний: {stats['total_companies']}\n"
             f"🎫 Купонов: {stats['total_coupons']}\n"
             f"✅ Активировано: {stats['used_coupons']}\n"
-            
+            f"📅 Активных подписок: {stats['active_subscriptions']}"
         )
         
         await message.answer(response)
