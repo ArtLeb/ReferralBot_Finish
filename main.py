@@ -45,4 +45,8 @@ async def main():
 
 if __name__ == '__main__':
     # Запуск асинхронного event loop
-    asyncio.run(main())
+    try:
+        import asyncio
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped!")

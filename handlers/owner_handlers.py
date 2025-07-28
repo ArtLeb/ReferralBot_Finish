@@ -6,6 +6,7 @@ from services.role_service import RoleService
 from services.user_service import UserService
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.database.models import User
+from services.report_service import ReportService
 from typing import Optional
 
 router = Router()
@@ -77,40 +78,14 @@ async def process_location_id(message: Message, state: FSMContext, session: Asyn
         await state.clear()
 
 @router.message(F.text == "Статистика")
-async def view_stats(message: Message, session: AsyncSession, user: User):
-    """Просмотр системной статистики"""
-    role_service = RoleService(session)
-    
-    if not await role_service.has_permission(user, "view_stats"):
-        await message.answer("⛔ У вас нет прав для просмотра статистики")
-        return
-    
-    try:
-        report_service = ReportService(session)
-        stats = await report_service.get_system_stats()
-        
-        response = (
-            "📊 Системная статистика:\n\n"
-            f"👤 Пользователей: {stats['total_users']}\n"
-            f"🏢 Компаний: {stats['total_companies']}\n"
-            f"🎫 Купонов: {stats['total_coupons']}\n"
-            f"✅ Активировано: {stats['used_coupons']}\n"
-            f"📅 Активных подписок: {stats['active_subscriptions']}"
-        )
-        
-        await message.answer(response)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
+async def view_stats(message: Message, session: AsyncSession):
+    report_service = ReportService(session)
+    stats = await report_service.get_system_stats()
+    # Форматирование и отправка статистики
 
 @router.message(F.text == "Отчет по купонам")
 async def coupons_report(message: Message, session: AsyncSession):
-    """Генерация отчета по купонам"""
     report_service = ReportService(session)
-    try:
-        report = await report_service.generate_coupons_report()
-        await message.answer_document(
-            document=report,
-            caption="📊 Отчет по купонам"
-        )
-    except Exception as e:
-        await message.answer(f"❌ Ошибка генерации отчета: {str(e)}")
+    report = await report_service.generate_coupons_report()
+    await message.answer_document(report)
+    report.close() 

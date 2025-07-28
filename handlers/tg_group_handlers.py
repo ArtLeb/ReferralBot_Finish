@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from utils.states import PartnerStates
 from sqlalchemy.orm import selectinload
 import logging
+from aiogram.exceptions import TelegramBadRequest  # Универсальное исключение для обработки ошибок Telegram
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -142,9 +143,35 @@ async def process_group_id(message: Message, state: FSMContext):
     """Обработка ввода ID группы"""
     try:
         group_id = int(message.text)
-        await state.update_data(group_id=group_id)
-        await message.answer("Введите название группы:")
-        await state.set_state(TgGroupStates.waiting_for_group_name)
+        bot_id = (await message.bot.get_me()).id
+        
+        try:
+            # Пытаемся получить информацию о члене чата
+            member = await message.bot.get_chat_member(chat_id=group_id, user_id=bot_id)
+            
+            # Проверяем, что бот является участником и не покинул группу
+            if member.status in ['left', 'kicked']:
+                await message.answer("❌ Бот не является участником группы. Добавьте бота в группу и повторите попытку.")
+            else:
+                await state.update_data(group_id=group_id, is_active=True)
+                await message.answer("Введите название группы:")
+                await state.set_state(TgGroupStates.waiting_for_group_name)
+                
+        except TelegramBadRequest as e:
+            # Обрабатываем разные коды ошибок
+            if "chat not found" in str(e).lower() or "CHAT_NOT_FOUND" in str(e):
+                await message.answer("❌ Группа не найдена. Проверьте ID и добавьте бота в группу.")
+            elif "bot is not a member" in str(e).lower() or "USER_NOT_PARTICIPANT" in str(e):
+                await message.answer("❌ Бот не является участником группы. Добавьте бота в группу.")
+            elif "forbidden" in str(e).lower() or "FORBIDDEN" in str(e):
+                await message.answer("❌ Нет доступа к группе. Добавьте бота в группу как администратора.")
+            else:
+                logger.error(f"Ошибка Telegram при проверке группы: {e}")
+                await message.answer(f"❌ Произошла ошибка при проверке группы: {e}")
+        except Exception as e:
+            logger.error(f"Неизвестная ошибка при проверке группы: {e}")
+            await message.answer(f"❌ Произошла неизвестная ошибка при проверке группы: {e}")
+            
     except ValueError:
         await message.answer("❌ ID группы должен быть числом. Попробуйте еще раз.")
 
@@ -159,6 +186,7 @@ async def process_group_name(message: Message, state: FSMContext, session: Async
     data = await state.get_data()
     group_id = data['group_id']
     company_id = data['company_id']
+    is_active = data.get('is_active', False)  # Статус из проверки
     
     # Проверка существования группы
     group_service = TgGroupService(session)
@@ -175,7 +203,7 @@ async def process_group_name(message: Message, state: FSMContext, session: Async
             group_id=group_id,
             name=group_name,
             company_id=company_id,
-            is_active=True
+            is_active=is_active  # Передаем статус
         )
         await message.answer(f"✅ Группа '{group_name}' успешно добавлена!")
     except Exception as e:
@@ -196,6 +224,7 @@ async def process_group_name(message: Message, state: FSMContext, session: Async
 
 @router.callback_query(F.data.startswith("group_"))
 async def view_group(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+    """Просмотр деталей группы"""
     group_id = int(callback.data.split("_")[1])
     
     # Явно загружаем связанную компанию
@@ -207,13 +236,42 @@ async def view_group(callback: CallbackQuery, session: AsyncSession, state: FSMC
         await callback.answer("Группа не найдена")
         return
     
+    # Проверяем актуальный статус бота в группе
+    actual_status = "Неактивна"
+    try:
+        bot_id = (await callback.bot.get_me()).id
+        try:
+            # Проверяем статус бота в группе
+            member = await callback.bot.get_chat_member(chat_id=group.group_id, user_id=bot_id)
+            if member.status not in ['left', 'kicked']:
+                actual_status = "Активна"
+        except TelegramBadRequest as e:
+            # Обрабатываем ошибки Telegram
+            if "chat not found" in str(e).lower() or "CHAT_NOT_FOUND" in str(e):
+                actual_status = "Группа не найдена"
+            elif "bot is not a member" in str(e).lower() or "USER_NOT_PARTICIPANT" in str(e):
+                actual_status = "Бот не в группе"
+            elif "forbidden" in str(e).lower() or "FORBIDDEN" in str(e):
+                actual_status = "Нет доступа"
+            else:
+                actual_status = f"Ошибка: {str(e)[:50]}"
+        except Exception as e:
+            actual_status = f"Ошибка: {str(e)[:50]}"
+    except Exception as e:
+        logger.error(f"Ошибка при получении информации о боте: {e}")
+        actual_status = "Ошибка проверки"
     
+    # Формируем ответ
     response = (
         f"📢 Группа: {group.name}\n"
         f"🆔 ID: {group.group_id}\n"
         f"🏢 Компания: {group.company.Name_comp}\n"
-        f"🔹 Статус: {'Активна' if group.is_active else 'Неактивна'}"
+        f"🔹 Статус: {actual_status}"
     )
+    
+    # Добавляем предупреждение если бот не в группе
+    if actual_status != "Активна":
+        response += "\n\n⚠️ Бот не является участником группы. Добавьте бота в группу для активации."
     
     # Кнопки управления
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
