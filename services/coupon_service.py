@@ -1,12 +1,11 @@
 import uuid
 from datetime import datetime, timedelta, date
 from decimal import Decimal
-
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 from repositories.coupon_repository import CouponRepository
-from utils.database.models import Coupon, CouponType, CouponStatus
+from utils.database.models import Coupon, CouponType, CouponStatus, CompLocation, Company
 from services.group_service import GroupService
-
 
 class CouponService:
     """Сервис для работы с купонами"""
@@ -155,3 +154,112 @@ class CouponService:
         await self.session.commit()
         return coupon_type
 
+
+    async def get_collaborations(
+        self, 
+        user_id_tg: int, 
+        role: str
+    ) -> list[CouponType]:
+        """
+        Получает коллаборации по роли пользователя
+        Args:
+            user_id_tg: Telegram ID пользователя
+            role: Роль пользователя (iam_coupon, iam_agent, my_collabs)
+        Returns:
+            list[CouponType]: Список типов купонов (коллабораций)
+        """
+        # Основной запрос с загрузкой связанных данных
+        stmt = select(CouponType).options(
+            joinedload(CouponType.company),
+            joinedload(CouponType.location).joinedload(CompLocation.company)
+        )
+        
+        # Фильтрация в зависимости от роли
+        if role == "iam_coupon":
+            stmt = stmt.where(CouponType.company_agent_id == user_id_tg)
+        elif role == "iam_agent":
+            stmt = stmt.where(CouponType.location_agent_id == user_id_tg)
+        elif role == "my_collabs":
+            stmt = stmt.where(
+                (CouponType.company_agent_id == user_id_tg) |
+                (CouponType.location_agent_id == user_id_tg)
+            )
+        
+        # Выполнение запроса и возврат результатов
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    
+    async def terminate_collaboration(
+        self, 
+        coupon_type_id: int
+    ) -> CouponType:
+        """
+        Прекращает коллаборацию (устанавливает end_date в текущую дату)
+        Args:
+            coupon_type_id: ID типа купона (коллаборации)
+        Returns:
+            CouponType: Обновленный тип купона
+        """
+        coupon_type = await self.session.get(CouponType, coupon_type_id)
+        if coupon_type:
+            coupon_type.end_date = datetime.now().date()
+            await self.session.commit()
+        return coupon_type
+
+    async def get_collaboration_requests(
+        self, 
+        user_id_tg: int
+    ) -> list[CouponType]:
+        """
+        Получает входящие запросы на коллаборацию для пользователя
+        Args:
+            user_id_tg: Telegram ID пользователя
+        Returns:
+            list[CouponType]: Список запросов
+        """
+        stmt = select(CouponType).options(
+            joinedload(CouponType.company),
+        ).where(
+            (CouponType.location_agent_id == user_id_tg) &
+            (CouponType.agent_agree == False)  # Только неподтвержденные
+        )
+        
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def accept_collaboration(
+        self, 
+        coupon_type_id: int
+    ) -> bool:
+        """
+        Принимает запрос на коллаборацию
+        Args:
+            coupon_type_id: ID типа купона
+        Returns:
+            bool: Успешность операции
+        """
+        coupon_type = await self.session.get(CouponType, coupon_type_id)
+        if coupon_type:
+            coupon_type.agent_agree = True
+            await self.session.commit()
+            return True
+        return False
+
+    async def reject_collaboration(
+        self, 
+        coupon_type_id: int
+    ) -> bool:
+        """
+        Отклоняет запрос на коллаборацию
+        Args:
+            coupon_type_id: ID типа купона
+        Returns:
+            bool: Успешность операции
+        """
+        coupon_type = await self.session.get(CouponType, coupon_type_id)
+        if coupon_type:
+            await self.session.delete(coupon_type)
+            await self.session.commit()
+            return True
+        return False

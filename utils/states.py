@@ -66,8 +66,9 @@ class CollaborationStates(StatesGroup):
     filter_comp_start_menu = State()
     filter_comp_menu = State()
     collab_menu = State()
-
+    view_collaborations = State()
     choose_location = State()
+    view_requests = State()
 
 
 class CreateCouponTypeStates(StatesGroup):
