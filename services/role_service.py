@@ -1,12 +1,8 @@
 # role_service.py
-from typing import Any, Coroutine, List, Tuple
-
+from typing import List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func, and_
 from datetime import date, timedelta
-
-from sqlalchemy.testing.suite.test_reflection import users
-
 from utils.database.models import User, UserRole
 from utils.config import config
 import logging
@@ -36,13 +32,15 @@ class RoleService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_comp_owner(self, company_id: int, loc_id: int) -> User | None:
-        smtp = select(User).join(UserRole, User.id_tg==UserRole.user_id).where(
-            UserRole.company_id == company_id and
-            UserRole.location_id == loc_id and
-            UserRole.role == 'owner'
+    async def get_comp_owner(self, company_id: int, loc_id: int) -> Optional[User]:
+        stmt = select(User).join(UserRole, User.id == UserRole.user_id).where(
+            and_(
+                UserRole.company_id == company_id,
+                UserRole.location_id == loc_id,
+                UserRole.role == 'owner'
+            )
         )
-        result = await self.session.execute(smtp)
+        result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def assign_role_to_user(
@@ -64,9 +62,11 @@ class RoleService:
         """
         # Проверяем, есть ли уже такая роль
         stmt = select(UserRole).where(
-            (UserRole.user_id == user_id) &
-            (UserRole.role == role_name) &
-            (UserRole.company_id == company_id)
+            and_(
+                UserRole.user_id == user_id,
+                UserRole.role == role_name,
+                UserRole.company_id == company_id
+            )
         )
         existing = await self.session.scalar(stmt)
         if existing:
@@ -87,7 +87,7 @@ class RoleService:
         await self.session.commit()
         return user_role
 
-    async def get_user_roles(self, user_id: int) -> list[UserRole]:
+    async def get_user_roles(self, user_id: int) -> List[UserRole]:
         """
         Получает роли пользователя
         Args:
@@ -148,8 +148,10 @@ class RoleService:
             bool: True если была удалена хотя бы одна роль, False если ничего не удалено
         """
         stmt = delete(UserRole).where(
-            (UserRole.user_id == user_id) &
-            (UserRole.company_id == company_id)
+            and_(
+                UserRole.user_id == user_id,
+                UserRole.company_id == company_id
+            )
         )
 
         if role_name is not None:
@@ -181,7 +183,7 @@ class RoleService:
             List[Tuple[UserRole, User]]: Список пар объектов UserRole и User
         """
         stmt = select(UserRole, User).join(
-            User, UserRole.user_id == User.id_tg
+            User, UserRole.user_id == User.id
         ).where(
             UserRole.company_id == company_id
         )
@@ -194,3 +196,104 @@ class RoleService:
 
         result = await self.session.execute(stmt)
         return result.all()
+
+    # Новые методы для работы с администраторами
+    async def get_location_admins(self, company_id: int, location_id: int) -> List[UserRole]:
+        """
+        Получает список администраторов для локации
+        Args:
+            company_id: ID компании
+            location_id: ID локации
+        Returns:
+            list[UserRole]: Список ролей администраторов
+        """
+        stmt = select(UserRole).join(
+            User, UserRole.user_id == User.id
+        ).where(
+            and_(
+                UserRole.company_id == company_id,
+                UserRole.location_id == location_id,
+                UserRole.role == 'admin'
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_user_role_in_location(
+        self, 
+        user_id: int, 
+        company_id: int, 
+        location_id: int, 
+        role: str
+    ) -> Optional[UserRole]:
+        """
+        Проверяет наличие роли у пользователя в локации
+        Args:
+            user_id: ID пользователя
+            company_id: ID компании
+            location_id: ID локации
+            role: Название роли
+        Returns:
+            UserRole или None если роль не найдена
+        """
+        stmt = select(UserRole).where(
+            and_(
+                UserRole.user_id == user_id,
+                UserRole.company_id == company_id,
+                UserRole.location_id == location_id,
+                UserRole.role == role
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def add_admin_role(
+        self,
+        user_id: int,
+        company_id: int,
+        location_id: int,
+        end_date: date,
+        changed_by: int
+    ) -> UserRole:
+        """
+        Добавляет роль администратора пользователю
+        Args:
+            user_id: ID пользователя
+            company_id: ID компании
+            location_id: ID локации
+            end_date: Дата окончания роли
+            changed_by: ID пользователя, который добавил роль
+        Returns:
+            UserRole: Созданная роль
+        """
+        new_role = UserRole(
+            user_id=user_id,
+            role='admin',
+            company_id=company_id,
+            location_id=location_id,
+            start_date=date.today(),
+            end_date=end_date,
+            changed_by=changed_by,
+            changed_date=func.now()
+        )
+        self.session.add(new_role)
+        await self.session.commit()
+        return new_role
+
+    async def remove_admin_role(self, role_id: int) -> bool:
+        """
+        Удаляет роль администратора по ID
+        Args:
+            role_id: ID роли в таблице USERS_ROLES
+        Returns:
+            bool: True если роль удалена, False если не найдена
+        """
+        stmt = delete(UserRole).where(
+            and_(
+                UserRole.id == role_id,
+                UserRole.role == 'admin'
+            )
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return result.rowcount > 0

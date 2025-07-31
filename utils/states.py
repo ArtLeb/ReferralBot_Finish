@@ -60,6 +60,9 @@ class PartnerStates(StatesGroup):
 
     generate_coupon_type = State()
 
+    manage_admins = State()  # Меню управления администраторами
+    remove_admin = State()   # Удаление администратора
+
 
 class CollaborationStates(StatesGroup):
     collab_location_info = State()
@@ -69,6 +72,7 @@ class CollaborationStates(StatesGroup):
     view_collaborations = State()
     choose_location = State()
     view_requests = State()
+    COLLABORATION_MENU = State()
 
 
 class CreateCouponTypeStates(StatesGroup):
