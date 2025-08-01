@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, ReplyKeyboardMarkup
 from aiogram.types import KeyboardButton
+from services import user_service
 from utils.database.models import User
 from services.user_service import UserService
 from datetime import date, timedelta
@@ -84,13 +85,23 @@ async def handle_manage_admins(message: Message, state: FSMContext, session: Asy
     
     text = "👑 Администраторы этой локации:\n"
     if admins:
-        for admin in admins:
-            user = await session.get(User, admin.user_id)
-            text += f"- {user.first_name} {user.last_name} (ID: {user.id_tg})\n"
+        user_service = UserService(session)  
+        
+        for admin_role in admins:  # Перебираем роли администраторов
+            # Получаем пользователя по Telegram ID из роли
+            user = await user_service.get_user_by_tg_id(admin_role.user_id)
+            
+            if user:
+                # Форматируем имя и фамилию, если они есть
+                name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+                text += f"- {name} (Telegram ID: {user.id_tg})\n"
+            else:
+                # Если пользователь не найден, используем ID из роли
+                text += f"- [Неизвестный пользователь] (Telegram ID: {admin_role.user_id})\n"
     else:
         text += "Пока нет администраторов."
 
-    # Клавиатура действий
+    # Клавиатура действий 
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Добавить администратора")],
@@ -119,6 +130,7 @@ async def back_to_location_management(message: Message, state: FSMContext):
     await message.answer("Выберите действие для локации:", reply_markup=markup)
 
 # Начало добавления администратора
+# Обработчик управления администраторами
 @router.message(PartnerStates.manage_admins, F.text == "Добавить администратора")
 async def start_adding_admin(message: Message, state: FSMContext):
     await message.answer("Введите Telegram ID пользователя для назначения администратором:")
@@ -146,7 +158,12 @@ async def process_add_admin_tg_id(message: Message, state: FSMContext, session: 
 
     # Проверка наличия роли
     role_service = RoleService(session)
-    existing = await role_service.get_user_role_in_location(user.id, company_id, location_id, 'admin')
+    existing = await role_service.get_user_role_in_location(
+        tg_id=tg_id,
+        company_id=company_id,
+        location_id=location_id,
+        role='admin'
+    )
     
     if existing:
         await message.answer("❌ Этот пользователь уже является администратором.")
@@ -155,14 +172,14 @@ async def process_add_admin_tg_id(message: Message, state: FSMContext, session: 
     # Добавление роли
     end_date = date.today() + timedelta(days=365)
     await role_service.add_admin_role(
-        user_id=user.id,
+        tg_id=tg_id,
         company_id=company_id,
         location_id=location_id,
         end_date=end_date,
         changed_by=message.from_user.id
     )
     
-    await message.answer(f"✅ Пользователь {user.first_name} назначен администратором.")
+    await message.answer(f"✅ Пользователь назначен администратором. (Telegram ID: {tg_id})")
     await handle_manage_admins(message, state, session)
 
 # Удаление администратора
@@ -181,18 +198,21 @@ async def start_removing_admin(message: Message, state: FSMContext, session: Asy
 
     # Создаем клавиатуру с администраторами
     keyboard = ReplyKeyboardBuilder()
-    admin_ids = {}
+    admin_records = {}
+    user_service = UserService(session)
     
     for admin in admins:
-        user = await session.get(User, admin.user_id)
-        btn_text = f"{user.first_name} {user.last_name} (ID: {user.id_tg})"
-        admin_ids[btn_text] = admin.id
+        user = await user_service.get_user_by_tg_id(admin.user_id)
+        display_name = f"{user.first_name} {user.last_name}" if user else f"ID: {admin.user_id}"
+        btn_text = f"{display_name} (TG: {admin.user_id})"
+        
+        admin_records[btn_text] = admin.id  # Сохраняем ID записи роли
         keyboard.add(KeyboardButton(text=btn_text))
     
     keyboard.add(KeyboardButton(text="Назад"))
     keyboard.adjust(1)
     
-    await state.update_data(admin_ids=admin_ids)
+    await state.update_data(admin_records=admin_records)
     await message.answer("Выберите администратора для удаления:", reply_markup=keyboard.as_markup(resize_keyboard=True))
     await state.set_state(PartnerStates.remove_admin)
 
@@ -200,18 +220,18 @@ async def start_removing_admin(message: Message, state: FSMContext, session: Asy
 @router.message(PartnerStates.remove_admin)
 async def process_remove_admin(message: Message, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
-    admin_ids = data.get("admin_ids", {})
+    admin_records = data.get("admin_records", {})
     
     if message.text == "Назад":
         await handle_manage_admins(message, state, session)
         return
         
-    if message.text not in admin_ids:
+    if message.text not in admin_records:
         await message.answer("❌ Администратор не найден.")
         return
 
     role_service = RoleService(session)
-    success = await role_service.remove_admin_role(admin_ids[message.text])
+    success = await role_service.remove_admin_role(admin_records[message.text])
     
     if success:
         await message.answer("✅ Администратор успешно удален.")

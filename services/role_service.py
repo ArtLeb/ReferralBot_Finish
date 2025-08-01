@@ -1,8 +1,8 @@
-# role_service.py
 from typing import List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, and_
+from sqlalchemy import select, delete, func, and_, or_
 from datetime import date, timedelta
+from services.user_service import UserService
 from utils.database.models import User, UserRole
 from utils.config import config
 import logging
@@ -33,7 +33,7 @@ class RoleService:
         self.session = session
 
     async def get_comp_owner(self, company_id: int, loc_id: int) -> Optional[User]:
-        stmt = select(User).join(UserRole, User.id == UserRole.user_id).where(
+        stmt = select(User).join(UserRole, User.id_tg == UserRole.user_id).where(
             and_(
                 UserRole.company_id == company_id,
                 UserRole.location_id == loc_id,
@@ -45,7 +45,7 @@ class RoleService:
 
     async def assign_role_to_user(
             self,
-            user_id: int,
+            tg_id: int,  # Принимаем Telegram ID вместо внутреннего ID
             company_id: int,
             role_name: str,
             location_id: int = None
@@ -53,7 +53,7 @@ class RoleService:
         """
         Назначает роль пользователю
         Args:
-            user_id: ID пользователя
+            tg_id: Telegram ID пользователя
             role_name: Название роли
             company_id: ID компании
             location_id: ID локации (опционально)
@@ -63,7 +63,7 @@ class RoleService:
         # Проверяем, есть ли уже такая роль
         stmt = select(UserRole).where(
             and_(
-                UserRole.user_id == user_id,
+                UserRole.user_id == tg_id,
                 UserRole.role == role_name,
                 UserRole.company_id == company_id
             )
@@ -74,51 +74,51 @@ class RoleService:
 
         # Создаем новую роль
         user_role = UserRole(
-            user_id=user_id,
+            user_id=tg_id,
             role=role_name,
             company_id=company_id,
             location_id=location_id,
             start_date=date.today(),
             end_date=date.today() + timedelta(days=365),
-            changed_by=user_id
+            changed_by=tg_id
         )
 
         self.session.add(user_role)
         await self.session.commit()
         return user_role
 
-    async def get_user_roles(self, user_id: int) -> List[UserRole]:
+    async def get_user_roles(self, tg_id: int) -> List[UserRole]:
         """
         Получает роли пользователя
         Args:
-            user_id: ID пользователя
+            tg_id: Telegram ID пользователя
         Returns:
             list[UserRole]: Список ролей
         """
-        stmt = select(UserRole).where(UserRole.user_id == user_id)
+        stmt = select(UserRole).where(UserRole.user_id == tg_id)
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def has_permission(self, user_id: int, permission: str) -> bool:
+    async def has_permission(self, tg_id: int, permission: str) -> bool:
         """
         Проверяет наличие разрешения у пользователя
         Args:
-            user_id: ID пользователя
+            tg_id: Telegram ID пользователя
             permission: Требуемое разрешение
         Returns:
             bool: True если разрешение есть
         """
-        # Получаем пользователя по ID
-        user = await self.session.get(User, user_id)
+        # Получаем пользователя по Telegram ID
+        user = await UserService(self.session).get_user_by_tg_id(tg_id)
         if not user:
             return False
 
-        # Если OWNER_ID задан и Telegram ID пользователя совпадает с OWNER_ID, то разрешаем всё
-        if config.OWNER_ID and user.id_tg == config.OWNER_ID:
+        # Если OWNER_ID задан и совпадает с Telegram ID, разрешаем всё
+        if config.OWNER_ID and tg_id == config.OWNER_ID:
             return True
 
         # Получаем роли пользователя
-        roles = await self.get_user_roles(user_id)
+        roles = await self.get_user_roles(tg_id)
 
         # Проверяем разрешения для каждой роли
         for role in roles:
@@ -130,74 +130,36 @@ class RoleService:
 
     async def remove_role(
             self,
-            user_id: int,
+            tg_id: int,
             company_id: int,
             role_name: str = None,
             location_id: int = None
     ) -> bool:
         """
         Удаляет роль пользователя
-
         Args:
-            user_id: ID пользователя в Telegram
+            tg_id: Telegram ID пользователя
             company_id: ID компании
-            role_name: Название роли (если None - удаляет все роли пользователя в компании/локации)
-            location_id: ID локации (если None - удаляет роли в рамках всей компании)
-
+            role_name: Название роли
+            location_id: ID локации
         Returns:
-            bool: True если была удалена хотя бы одна роль, False если ничего не удалено
+            bool: True если удалено
         """
-        stmt = delete(UserRole).where(
-            and_(
-                UserRole.user_id == user_id,
-                UserRole.company_id == company_id
-            )
-        )
-
-        if role_name is not None:
-            stmt = stmt.where(UserRole.role == role_name)
-
-        if location_id is not None:
-            stmt = stmt.where(UserRole.location_id == location_id)
-
+        conditions = [
+            UserRole.user_id == tg_id,
+            UserRole.company_id == company_id
+        ]
+        
+        if role_name:
+            conditions.append(UserRole.role == role_name)
+        if location_id:
+            conditions.append(UserRole.location_id == location_id)
+            
+        stmt = delete(UserRole).where(and_(*conditions))
         result = await self.session.execute(stmt)
         await self.session.commit()
-
         return result.rowcount > 0
 
-    async def get_roles_in_loc(
-            self,
-            company_id: int,
-            role_name: str = None,
-            location_id: int = None
-    ) -> List[Tuple[UserRole, User]]:
-        """
-        Получает список пар (UserRole, User) для заданных условий
-
-        Args:
-            company_id: ID компании
-            role_name: Название роли (опционально)
-            location_id: ID локации (опционально)
-
-        Returns:
-            List[Tuple[UserRole, User]]: Список пар объектов UserRole и User
-        """
-        stmt = select(UserRole, User).join(
-            User, UserRole.user_id == User.id
-        ).where(
-            UserRole.company_id == company_id
-        )
-
-        if role_name:
-            stmt = stmt.where(UserRole.role == role_name)
-
-        if location_id:
-            stmt = stmt.where(UserRole.location_id == location_id)
-
-        result = await self.session.execute(stmt)
-        return result.all()
-
-    # Новые методы для работы с администраторами
     async def get_location_admins(self, company_id: int, location_id: int) -> List[UserRole]:
         """
         Получает список администраторов для локации
@@ -207,9 +169,7 @@ class RoleService:
         Returns:
             list[UserRole]: Список ролей администраторов
         """
-        stmt = select(UserRole).join(
-            User, UserRole.user_id == User.id
-        ).where(
+        stmt = select(UserRole).where(
             and_(
                 UserRole.company_id == company_id,
                 UserRole.location_id == location_id,
@@ -221,7 +181,7 @@ class RoleService:
 
     async def get_user_role_in_location(
         self, 
-        user_id: int, 
+        tg_id: int, 
         company_id: int, 
         location_id: int, 
         role: str
@@ -229,16 +189,16 @@ class RoleService:
         """
         Проверяет наличие роли у пользователя в локации
         Args:
-            user_id: ID пользователя
+            tg_id: Telegram ID пользователя
             company_id: ID компании
             location_id: ID локации
             role: Название роли
         Returns:
-            UserRole или None если роль не найдена
+            UserRole или None
         """
         stmt = select(UserRole).where(
             and_(
-                UserRole.user_id == user_id,
+                UserRole.user_id == tg_id,
                 UserRole.company_id == company_id,
                 UserRole.location_id == location_id,
                 UserRole.role == role
@@ -249,25 +209,25 @@ class RoleService:
 
     async def add_admin_role(
         self,
-        user_id: int,
+        tg_id: int,
         company_id: int,
         location_id: int,
         end_date: date,
         changed_by: int
     ) -> UserRole:
         """
-        Добавляет роль администратора пользователю
+        Добавляет роль администратора
         Args:
-            user_id: ID пользователя
+            tg_id: Telegram ID пользователя
             company_id: ID компании
             location_id: ID локации
-            end_date: Дата окончания роли
-            changed_by: ID пользователя, который добавил роль
+            end_date: Дата окончания
+            changed_by: Telegram ID кто добавил
         Returns:
             UserRole: Созданная роль
         """
         new_role = UserRole(
-            user_id=user_id,
+            user_id=tg_id,
             role='admin',
             company_id=company_id,
             location_id=location_id,
@@ -282,11 +242,11 @@ class RoleService:
 
     async def remove_admin_role(self, role_id: int) -> bool:
         """
-        Удаляет роль администратора по ID
+        Удаляет роль администратора по ID записи
         Args:
-            role_id: ID роли в таблице USERS_ROLES
+            role_id: ID записи в USERS_ROLES
         Returns:
-            bool: True если роль удалена, False если не найдена
+            bool: True если удалено
         """
         stmt = delete(UserRole).where(
             and_(
