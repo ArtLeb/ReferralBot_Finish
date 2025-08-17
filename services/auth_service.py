@@ -1,3 +1,5 @@
+from typing import Tuple
+
 from repositories.user_repository import UserRepository
 from utils.database.models import User
 from datetime import datetime
@@ -7,7 +9,7 @@ class AuthService:
     def __init__(self, session):
         self.user_repo = UserRepository(session)
     
-    async def get_or_create_user(self, tg_id: int, first_name: str, last_name: str) -> User:
+    async def get_or_create_user(self, tg_id: int, first_name: str, last_name: str, username: str|None) -> Tuple[User, bool]:
         """
         Получает или создает пользователя в системе
         Args:
@@ -25,9 +27,10 @@ class AuthService:
                 'last_name': last_name,
                 'tel_num': '',
                 'reg_date': datetime.now().date(),
+                'user_name': username,
                 'role': 'client'
             })
-        return user
+        return user, bool(user)
     
     async def update_user_profile(self, user_id: int, update_data: dict) -> User:
         """

@@ -1,4 +1,3 @@
-from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from utils.database.models import User
@@ -7,13 +6,6 @@ class UserService:
     """Сервис для работы с пользователями"""
     def __init__(self, session: AsyncSession):
         self.session = session
-
-    async def get_user_by_tg_id(self, tg_id: int) -> Optional[User]:
-        stmt = select(User).where(User.id_tg == tg_id)
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
-    
-
     
     async def get_user_by_tg_id(self, tg_id: int) -> User:
         """

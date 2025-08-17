@@ -1,5 +1,6 @@
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from redis.asyncio.client import Redis
 from utils.config import config
@@ -7,7 +8,7 @@ from utils.config import config
 # Создание бота
 bot = Bot(
     token=config.BOT_TG_TOKEN,
-    parse_mode=ParseMode.HTML
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 
 # Настройка Redis

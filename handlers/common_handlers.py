@@ -17,18 +17,12 @@ router = Router()
 
 
 @router.message(RegistrationStates.CHOOSING_ROLE, F.text == "Я клиент")
-async def client_selected(message: Message, session: AsyncSession, state: FSMContext, user: User):
+async def client_selected(message: Message, session: AsyncSession, state: FSMContext):
     """Обработчик выбора роли клиента"""
-    role_service = RoleService(session)
-    await role_service.assign_role_to_user(
-        user_id=message.from_user.id,
-        role_name='client',
-        company_id=1  # ID системной компании, по умолчанию для всех новых пользователей которые выберут я клиент
-    )
     await state.clear()
     await message.answer(
         "✅ Вы зарегистрированы как клиент!",
-        reply_markup=await main_menu(session, user)
+        reply_markup=await main_menu(session, message.from_user.id)
     )
 
 
@@ -135,7 +129,8 @@ async def process_company_address(message: Message, state: FSMContext, session: 
             city=data['city'],
             address=data['address'],
             map_url=message.text,
-            name_loc=data['company_name']
+            name_loc=data['company_name'],
+            main_loc=True
         )
         for category_id in data.get('selected_category', []):
             await company_service.set_loc_category(

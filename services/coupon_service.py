@@ -1,11 +1,16 @@
 import uuid
 from datetime import datetime, timedelta, date
 from decimal import Decimal
-from sqlalchemy import select
+from typing import Tuple
+
+from sqlalchemy import select, or_, and_
 from sqlalchemy.orm import joinedload
+
 from repositories.coupon_repository import CouponRepository
-from utils.database.models import Coupon, CouponType, CouponStatus, CompLocation, Company
+from services.company_service import CompanyService
+from utils.database.models import Coupon, CouponType, CouponStatus, CompLocation, UserRole, Company
 from services.group_service import GroupService
+
 
 class CouponService:
     """Сервис для работы с купонами"""
@@ -154,101 +159,141 @@ class CouponService:
         await self.session.commit()
         return coupon_type
 
-
     async def get_collaborations(
-        self, 
-        user_id_tg: int, 
-        role: str
+            self,
+            role: str | list,
+            comp_id: int,
     ) -> list[CouponType]:
         """
         Получает коллаборации по роли пользователя
         Args:
-            user_id_tg: Telegram ID пользователя
-            role: Роль пользователя (iam_coupon, iam_agent, my_collabs)
+            :param role:
+            :param comp_id:
         Returns:
             list[CouponType]: Список типов купонов (коллабораций)
         """
-        # Основной запрос с загрузкой связанных данных
-        stmt = select(CouponType).options(
-            joinedload(CouponType.company),
-            joinedload(CouponType.location).joinedload(CompLocation.company)
-        )
-        
-        # Фильтрация в зависимости от роли
-        if role == "iam_coupon":
-            stmt = stmt.where(CouponType.company_agent_id == user_id_tg)
-        elif role == "iam_agent":
-            stmt = stmt.where(CouponType.location_agent_id == user_id_tg)
-        elif role == "my_collabs":
-            stmt = stmt.where(
-                (CouponType.company_agent_id == user_id_tg) |
-                (CouponType.location_agent_id == user_id_tg)
-            )
-        
-        # Выполнение запроса и возврат результатов
-        result = await self.session.execute(stmt)
-        return result.scalars().all()
+        roles = [role] if isinstance(role, str) else role
 
-    
-    async def terminate_collaboration(
-        self, 
-        coupon_type_id: int
-    ) -> CouponType:
+        stmt = select(CouponType)
+
+        if "partner" in roles and not ("agent" in roles or "admin" in roles):
+            stmt = stmt.where(CouponType.company_id == comp_id)
+        elif ("agent" in roles or "admin" in roles) and "partner" not in roles:
+            stmt = stmt.where(CouponType.company_agent_id == comp_id)
+        else:
+            stmt = stmt.where(
+                or_(
+                    CouponType.company_agent_id == comp_id,
+                    CouponType.company_id == comp_id
+                )
+            )
+
+        if len(roles) == 1:
+            stmt = stmt.where(CouponType.is_active == 1)
+
+        result = await self.session.execute(stmt)
+        collaborations = result.scalars().all()
+        comp_service = CompanyService(session=self.session)
+
+        for coupon in collaborations:
+            if coupon.company_id == comp_id:
+                coupon.company.Name_comp = (await comp_service.get_company_by_id(coupon.company_agent_id)).Name_comp
+
+        return collaborations
+
+    async def get_collaboration_info(
+            self,
+            coupon_id: int
+    ) -> Tuple[CouponType, CompLocation] | None:
         """
-        Прекращает коллаборацию (устанавливает end_date в текущую дату)
+        Получает одну коллаборацию по ID купона
+        Args:
+            coupon_id: ID Купона
+        Returns:
+            CouponType: Объект коллаборации
+        """
+        stmt = select(CouponType, CompLocation).where(
+            and_(
+                CouponType.id_coupon_type == coupon_id,
+                CouponType.location_agent_id == CompLocation.id_location,
+                CompLocation.main_loc == True
+            )
+        )
+        try:
+            result = await self.session.execute(stmt)
+            return result.one()
+        except Exception as e:
+            return None
+
+    async def terminate_collaboration(
+            self,
+            coupon_type_id: int
+    ) -> CouponType | None:
+        """
+        Прекращает коллаборацию (устанавливает end_date в текущую дату и деактивирует)
         Args:
             coupon_type_id: ID типа купона (коллаборации)
         Returns:
-            CouponType: Обновленный тип купона
+            CouponType | None: Обновленный тип купона, либо None если не найден
         """
         coupon_type = await self.session.get(CouponType, coupon_type_id)
-        if coupon_type:
+
+        if coupon_type is not None:
             coupon_type.end_date = datetime.now().date()
+            coupon_type.is_active = False
+
+            self.session.add(coupon_type)
             await self.session.commit()
+            await self.session.refresh(coupon_type)
+
         return coupon_type
 
     async def get_collaboration_requests(
-        self, 
-        user_id_tg: int
+            self,
+            company_id: int,
+            location_id: int,
     ) -> list[CouponType]:
         """
         Получает входящие запросы на коллаборацию для пользователя
         Args:
-            user_id_tg: Telegram ID пользователя
+            company_id: ID Компании
+            location_id: ID Локации
         Returns:
             list[CouponType]: Список запросов
         """
-        stmt = select(CouponType).options(
-            joinedload(CouponType.company),
-        ).where(
-            (CouponType.location_agent_id == user_id_tg) &
-            (CouponType.agent_agree == False)  # Только неподтвержденные
+        stmt = select(CouponType).where(
+            CouponType.agent_agree == False and
+            CouponType.company_agent_id == company_id and
+            location_id == CouponType.location_agent_id
         )
-        
+
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def accept_collaboration(
-        self, 
-        coupon_type_id: int
-    ) -> bool:
+    async def set_collab_status(
+            self,
+            coupon_type_id: int,
+            status: bool = True
+    ) -> CouponType | bool:
         """
         Принимает запрос на коллаборацию
         Args:
             coupon_type_id: ID типа купона
+            status: Статус
         Returns:
             bool: Успешность операции
         """
         coupon_type = await self.session.get(CouponType, coupon_type_id)
         if coupon_type:
-            coupon_type.agent_agree = True
+            coupon_type.agent_agree = status
             await self.session.commit()
-            return True
+            return coupon_type
         return False
 
-    async def reject_collaboration(
-        self, 
-        coupon_type_id: int
+    async def set_collab_active_status(
+            self,
+            coupon_type_id: int,
+            status: bool = True
     ) -> bool:
         """
         Отклоняет запрос на коллаборацию
@@ -259,7 +304,7 @@ class CouponService:
         """
         coupon_type = await self.session.get(CouponType, coupon_type_id)
         if coupon_type:
-            await self.session.delete(coupon_type)
+            coupon_type.is_active = status
             await self.session.commit()
-            return True
+            return coupon_type
         return False

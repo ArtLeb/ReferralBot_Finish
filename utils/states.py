@@ -10,9 +10,11 @@ class Gen(StatesGroup):
 
 class CreateLocationStates(StatesGroup):
     # Для управления компаниями
+    get_loc_categorys = State()
     get_loc_category = State()
     get_loc_address_url = State()
     get_loc_address = State()
+    get_filter_loc_city = State()
     get_loc_city = State()
     get_comp_name = State()
     start_cr_loc = State()
@@ -20,13 +22,14 @@ class CreateLocationStates(StatesGroup):
 
 class PartnerStates(StatesGroup):
     # Для управления компаниями
+    edit_category_comp = State()
     get_new_admin_user_id = State()
     select_admin_menu = State()
     select_edit_fild_loc = State()
     edit_category_loc = State()
     process_comp_name = State()
     company_menu = State()
-    edit_company_name = State()
+    edit_company_attr = State()
 
     get_company_name = State()
 
@@ -60,19 +63,20 @@ class PartnerStates(StatesGroup):
 
     generate_coupon_type = State()
 
-    manage_admins = State()  # Меню управления администраторами
-    remove_admin = State()   # Удаление администратора
-
 
 class CollaborationStates(StatesGroup):
+    collab_request = State()
+    iam_coupon_active_collab = State()
+    my_collabs = State()
+    iam_agnt_menu = State()
+    view_requests = State()
+    view_collaborations = State()
     collab_location_info = State()
     filter_comp_start_menu = State()
     filter_comp_menu = State()
     collab_menu = State()
-    view_collaborations = State()
+
     choose_location = State()
-    view_requests = State()
-    COLLABORATION_MENU = State()
 
 
 class CreateCouponTypeStates(StatesGroup):

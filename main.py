@@ -2,7 +2,8 @@ import asyncio
 from utils.bot_obj import bot, dp
 from handlers import (common_handlers, owner_handlers, partner_handlers,
                       admin_handlers, client_handlers, command_handler, edit_company_handler,
-                      new_location_handler, collaboration_handler, collab_coupon_handler, tg_group_handlers)
+                      new_location_handler, collaboration_handler, collab_coupon_handler, tg_group_handlers,
+                      my_collabs_handler, collab_req_handler)
 from middlewares import DatabaseMiddleware
 from utils.logger import setup_logger
 
@@ -19,12 +20,12 @@ async def main():
     
     # 3. Регистрация middleware
     dp.update.middleware(DatabaseMiddleware())  # Обеспечивает сессию БД
-    # dp.update.middleware(RoleMiddleware())      # Определяет роли пользователя
 
     logger.info("Middlewares registered")
     
     # 4. Регистрация роутеров (обработчиков команд)
     dp.include_router(command_handler.router)
+    dp.include_router(collab_req_handler.router)
     dp.include_router(common_handlers.router)
     dp.include_router(edit_company_handler.router)
     dp.include_router(collaboration_handler.router)
@@ -32,6 +33,7 @@ async def main():
     dp.include_router(new_location_handler.router)
     dp.include_router(owner_handlers.router)
     dp.include_router(partner_handlers.router)
+    dp.include_router(my_collabs_handler.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(client_handlers.router)
     dp.include_router(tg_group_handlers.router)
@@ -45,8 +47,4 @@ async def main():
 
 if __name__ == '__main__':
     # Запуск асинхронного event loop
-    try:
-        import asyncio
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Bot stopped!")
+    asyncio.run(main())

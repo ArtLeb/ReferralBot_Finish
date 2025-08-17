@@ -152,6 +152,8 @@ class CompLocation(Base):
     address = Column(String(255), comment="Адрес локации")
     map_url = Column(Text, comment="Ссылка Адреса локации на картах")
     city = Column(String(255), comment="Город")
+    main_loc = Column(Boolean, default=False, comment="Главная локация")
+
     # Отношения
     company = relationship(
         "Company",
@@ -249,7 +251,9 @@ class CouponType(Base):
     company_agent_id = Column(BigInteger, nullable=False, comment="ID агента компании")
     location_agent_id = Column(BigInteger, nullable=False, comment="ID агента локации")
     days_for_used = Column(BigInteger, nullable=False, comment="Дней для использования")
+
     agent_agree = Column(Boolean, default=False, nullable=False, comment="Подтверждение агента")
+    is_active = Column(Boolean, default=False, nullable=False, comment="Подтверждение агента")
 
     # --- Relationships ---
     company = relationship(

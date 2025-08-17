@@ -4,7 +4,7 @@ from sqlalchemy import select, func, and_, delete
 from services.action_logger import CityLogger
 from utils.database.models import Company, CompLocation, UserRole, LocCat
 import logging
-from typing import List
+from typing import List, Any, Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ class CompanyService:
         return None
 
     async def create_location(self, company_id: int, city: str, name_loc: str,
-                              address: str, map_url: str) -> CompLocation:
+                              address: str, map_url: str, main_loc: bool = False) -> CompLocation:
         """
         Создает новую локацию компании
         Args:
@@ -133,6 +133,7 @@ class CompanyService:
             address: Адрес локации
             name_loc: название локации
             map_url: Ссылка на адрес в картах
+            main_loc: Главная ли локация
         Returns:
             CompLocation: Созданная локация
         """
@@ -142,7 +143,8 @@ class CompanyService:
                 address=address,
                 map_url=map_url,
                 name_loc=name_loc,
-                city=city
+                city=city,
+                main_loc=main_loc
             )
             self.session.add(location)
             await self.session.commit()
@@ -226,17 +228,23 @@ class CompanyService:
             await self.session.rollback()
             raise
 
-    async def get_locations_by_company(self, company_id: int) -> List[CompLocation]:
+    async def get_locations_by_company(self, company_id: int, main_loc: bool | None = None) -> CompLocation | list[
+        CompLocation]:
         """
         Получает локации компании
         Args:
             company_id: ID компании
+            main_loc: Глав. локация
         Returns:
-            List[CompLocation]: Список локаций
+            CompLocation - если результат один, иначе list[CompLocation]
         """
         stmt = select(CompLocation).where(CompLocation.id_comp == company_id)
+        if main_loc is not None:
+            stmt = stmt.where(CompLocation.main_loc == main_loc)
         result = await self.session.execute(stmt)
-        return result.scalars().all()
+        locations = result.scalars().first() if main_loc else result.scalars().all()
+
+        return locations
 
     async def get_location_by_id(self, location_id: int) -> CompLocation:
         """
@@ -278,6 +286,23 @@ class CompanyService:
                 await self.session.execute(stmt)
                 await self.session.commit()
                 return location
+            except Exception as e:
+                await self.session.rollback()
+        return None
+
+    async def delete_company(self, company_id: int) -> Company | None:
+        """
+            Удаляет данные локации
+            Args:
+                company_id: ID Компании
+        """
+        company = await self.get_company_by_id(company_id=company_id)
+        if company:
+            try:
+                stmt = delete(Company).where(Company.id_comp == company.id_comp)
+                await self.session.execute(stmt)
+                await self.session.commit()
+                return company
             except Exception as e:
                 await self.session.rollback()
         return None

@@ -22,16 +22,17 @@ router = Router()
 async def start(message: Message, session: AsyncSession, state: FSMContext):
     """Обработчик команды /start с регистрацией пользователя"""
     auth_service = AuthService(session)
-    await auth_service.get_or_create_user(
+    user, exists = await auth_service.get_or_create_user(
         tg_id=message.from_user.id,
         first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name or ""
+        last_name=message.from_user.last_name or "",
+        username=message.from_user.username or ""
     )
     await state.clear()
     role_service = RoleService(session)
     user_roles = await role_service.get_user_roles(message.from_user.id)
 
-    if user_roles:
+    if user_roles or exists:
         await message.answer(
             "👋 Добро пожаловать в ReferralBot!",
             reply_markup=await main_menu(session, message.from_user.id)

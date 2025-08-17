@@ -5,10 +5,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from handlers.tg_group_handlers import back_to_main
+from services.action_logger import CityLogger
 from services.category_service import CategoryService
 from services.company_service import CompanyService
-from utils.keyboards import loc_categories_keyboard
-from utils.states import CreateLocationStates
+from utils.keyboards import loc_categories_keyboard, main_menu, locations_keyboard, loc_city_keyboard
+from utils.states import CreateLocationStates, PartnerStates
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -25,32 +27,59 @@ async def start_create_new_location(message: Message, state: FSMContext, session
     await state.set_state(CreateLocationStates.get_comp_name)
 
 
-@router.message(CreateLocationStates.get_comp_name, F.text == 'Добавить Локацию')
-async def start_create_new_location(message: Message, state: FSMContext, session: AsyncSession):
-    data = await state.get_data()
-    await message.answer(
-        text=f"➕ Создание Локации\n\n"
-             f"🏢 Компания: {data['company_name']}\n\n\n"
-             f"✍️ Введите название локации:"
-    )
-
-
 @router.message(CreateLocationStates.get_comp_name)
 async def start_create_new_location(message: Message, state: FSMContext, session: AsyncSession):
     await state.update_data(new_loc_name=message.text)
+    city_service = CityLogger(session)
+    categories = await city_service.get_all_cities()
+    keyboard = loc_city_keyboard(categories, selected_cities=None)
     await message.answer(
-        text=f"✍️ Введите Название Города:"
+        text=f"✍️ Введите Категории",
+        reply_markup=keyboard
     )
+    await state.update_data(selected_city=None, current_page=0)
     await state.set_state(CreateLocationStates.get_loc_city)
 
 
-@router.message(CreateLocationStates.get_loc_city)
-async def start_create_new_location(message: Message, state: FSMContext, session: AsyncSession):
-    await state.update_data(new_loc_city=message.text)
-    await message.answer(
-        text=f"✍️ Введите Адрес локации:"
-    )
-    await state.set_state(CreateLocationStates.get_loc_address)
+@router.callback_query(CreateLocationStates.get_loc_city)
+async def start_create_new_location(cb: CallbackQuery, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    selected_city: int|None = data.get('selected_city', None)
+    current_page: int = data.get('current_page', 0)
+
+    if cb.data.startswith('city_'):
+        city_id = int(cb.data.split('_')[1])
+
+        await state.update_data(selected_city=city_id)
+
+        city_service = CityLogger(session)
+        cities = await city_service.get_all_cities()
+        keyboard = loc_city_keyboard(cities, selected_city, current_page)
+
+        await cb.message.edit_reply_markup(reply_markup=keyboard)
+
+    elif cb.data.startswith('page_'):
+        new_page = int(cb.data.split('_')[1])
+        await state.update_data(current_page=new_page)
+
+        city_service = CityLogger(session)
+        cities = await city_service.get_all_cities()
+        keyboard = loc_city_keyboard(cities, selected_city, new_page)
+
+        await cb.message.edit_reply_markup(reply_markup=keyboard)
+
+    elif cb.data == 'add_city':
+        if not selected_city:
+            await cb.answer(text="Выберите хотя бы одну категорию!", show_alert=True)
+            return
+        await state.update_data(current_page=0)
+        await cb.message.answer(text="💾 Горд компании успешно сохранен")
+        await cb.message.delete()
+
+        await state.set_state(CreateLocationStates.get_loc_address)
+        await cb.answer(
+            text=f"✍️ Введите Адрес локации:"
+        )
 
 
 @router.message(CreateLocationStates.get_loc_address)
@@ -73,10 +102,10 @@ async def start_create_new_location(message: Message, state: FSMContext, session
         reply_markup=keyboard
     )
     await state.update_data(selected_category=[], current_page=0)
-    await state.set_state(CreateLocationStates.get_loc_category)
+    await state.set_state(CreateLocationStates.get_loc_categorys)
 
 
-@router.callback_query(CreateLocationStates.get_loc_category)
+@router.callback_query(CreateLocationStates.get_loc_categorys)
 async def process_company_name(cb: CallbackQuery, state: FSMContext, session: AsyncSession):
     """Обработка выбора категорий и пагинации"""
     data = await state.get_data()
@@ -121,7 +150,7 @@ async def process_company_name(cb: CallbackQuery, state: FSMContext, session: As
         #   Создаем новую локацию
         location = await comp_service.create_location(
             company_id=data['company_id'],
-            city=data['new_loc_city'],
+            city=data['selected_city'],
             name_loc=data['new_loc_name'],
             map_url=data['new_loc_address_url'],
             address=data['new_loc_address']
@@ -147,7 +176,7 @@ async def process_company_name(cb: CallbackQuery, state: FSMContext, session: As
             f"   {data['new_loc_name']}\n\n"
 
             "🌆 <b>Город:</b>"
-            f"   {data['new_loc_city']}\n\n"
+            f"   {data['selected_city']}\n\n"
 
             "🏠 <b>Адрес:</b>"
             f"   {data['new_loc_address']}\n\n"
@@ -155,11 +184,23 @@ async def process_company_name(cb: CallbackQuery, state: FSMContext, session: As
             "━━━━━━━━━━━━━━━━━━━━"
         )
 
+        data = await state.get_data()
+        company_id = data.get('company_id')
+
+        service = CompanyService(session)
+        locations = await service.get_locations_by_company(company_id=company_id, main_loc=False)
+
+        if not locations:
+            await cb.message.answer("В этой компании пока нет локаций")
+            return
+
         await creation_msg.edit_text(
-            text=location_info,
+            text=location_info + "\n\n<b>📍 Локации компании:</b>",
+            reply_markup=locations_keyboard(locations),
             parse_mode='HTML'
         )
 
+        await state.set_state(PartnerStates.company_menu)
 
     elif cb.data == 'noop':
         await cb.answer()

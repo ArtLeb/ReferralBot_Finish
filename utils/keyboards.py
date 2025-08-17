@@ -6,7 +6,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardBut
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.role_service import RoleService
-from utils.database.models import Company, CompLocation, CompanyCategory, User, UserRole, City
+from utils.database.models import Company, CompLocation, CompanyCategory, User, UserRole, City, CouponType
 
 
 async def main_menu(session: AsyncSession, user) -> ReplyKeyboardMarkup:
@@ -21,7 +21,7 @@ async def main_menu(session: AsyncSession, user) -> ReplyKeyboardMarkup:
     # Кнопки для всех пользователей
     builder.row(KeyboardButton(text="Мои купоны"))
 
-    if 'admin' or 'partner' in roles:
+    if 'admin' in roles or 'partner' in roles:
         builder.row(KeyboardButton(text="Мои компании"))
         builder.row(KeyboardButton(text="Создать компанию"))
     if is_owner:
@@ -53,6 +53,10 @@ def locations_keyboard(locations: list[CompLocation]):
             text=location.name_loc,
             callback_data=f"location_{location.id_location}"
         )
+    builder.button(
+        text="Назад",
+        callback_data=f"location_back"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -220,7 +224,7 @@ def loc_admin_keyboard(
     ))
 
     builder.row(InlineKeyboardButton(
-        text="3",
+        text="Назад",
         callback_data="back"
     ))
 
@@ -235,6 +239,7 @@ def coupon_menu_keyboard(cb_data: str) -> InlineKeyboardMarkup:
     if cb_data == 'iam_agent':
         builder.add(InlineKeyboardButton(text="Запросы на Коллаборацию", callback_data="iam_agent_requests"))
         builder.add(InlineKeyboardButton(text="Активные коллаборации", callback_data="iam_agent_active"))
+    builder.add(InlineKeyboardButton(text="Назад", callback_data="back"))
     builder.adjust(1)
 
     return builder.as_markup()
@@ -295,18 +300,25 @@ def loc_comp_keyboard(
 
 
 def loc_city_keyboard(
-        companies: List[City],
-        selected_cities: Union[List[int], list],
+        cities: List[City],
+        selected_cities: Union[List[int], list] | int | None,
         page: int = 0,
         per_page: int = 10
 ) -> InlineKeyboardMarkup:
     """Клавиатура для выбора категорий с пагинацией (2 колонки, 10 элементов)"""
     builder = InlineKeyboardBuilder()
 
-    total_pages = (len(companies) + per_page - 1) // per_page
+    selected_cities = [] if selected_cities is None else selected_cities
+
+    selected_cities= (
+        [selected_cities] if isinstance(selected_cities, int)
+        else list(selected_cities)
+    )
+
+    total_pages = (len(cities) + per_page - 1) // per_page
     start_idx = page * per_page
     end_idx = start_idx + per_page
-    paginated_categories = companies[start_idx:end_idx]
+    paginated_categories = cities[start_idx:end_idx]
 
     row = []
     for i, company in enumerate(paginated_categories):
@@ -343,6 +355,7 @@ def loc_city_keyboard(
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_city"))
 
     return builder.as_markup()
+
 
 def comp_location_keyboard(
         locations: List[CompLocation],
@@ -388,5 +401,102 @@ def comp_location_keyboard(
     builder.row(*pagination_row)
 
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="location_back"))
+
+    return builder.as_markup()
+
+
+def collab_comp_keyboard(
+        collabs: List[CouponType],
+        page: int = 0,
+        per_page: int = 10
+) -> InlineKeyboardMarkup:
+    """Клавиатура для выбора категорий с пагинацией (2 колонки, 10 элементов)"""
+    builder = InlineKeyboardBuilder()
+
+    total_pages = (len(collabs) + per_page - 1) // per_page
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    paginated_categories = collabs[start_idx:end_idx]
+
+    row = []
+    for i, collab in enumerate(paginated_categories):
+        emoji = "🟢" if collab.is_active else "🟥"
+        button = InlineKeyboardButton(
+            text=f"{emoji} {collab.company.Name_comp}",
+            callback_data=f"my_collab_{collab.id_coupon_type}"
+        )
+        row.append(button)
+
+        if len(row) == 2:
+            builder.row(*row)
+            row = []
+
+    if row:
+        builder.row(*row)
+
+    pagination_row = []
+    if page > 0:
+        pagination_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page_{page - 1}"))
+    else:
+        pagination_row.append(InlineKeyboardButton(text=" ", callback_data="noop"))
+
+    pagination_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+
+    if page < total_pages - 1:
+        pagination_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page_{page + 1}"))
+    else:
+        pagination_row.append(InlineKeyboardButton(text=" ", callback_data="noop"))
+
+    builder.row(*pagination_row)
+
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_my_collab"))
+
+    return builder.as_markup()
+
+
+def collab_request_keyboard(
+        collabs: List[CouponType],
+        page: int = 0,
+        per_page: int = 10
+) -> InlineKeyboardMarkup:
+    """Клавиатура для выбора категорий с пагинацией (2 колонки, 10 элементов)"""
+    builder = InlineKeyboardBuilder()
+
+    total_pages = (len(collabs) + per_page - 1) // per_page
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    paginated_categories = collabs[start_idx:end_idx]
+
+    row = []
+    for i, collab in enumerate(paginated_categories):
+        button = InlineKeyboardButton(
+            text=f"{collab.company.Name_comp}",
+            callback_data=f"collab_req_{collab.id_coupon_type}"
+        )
+        row.append(button)
+
+        if len(row) == 2:
+            builder.row(*row)
+            row = []
+
+    if row:
+        builder.row(*row)
+
+    pagination_row = []
+    if page > 0:
+        pagination_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page_{page - 1}"))
+    else:
+        pagination_row.append(InlineKeyboardButton(text=" ", callback_data="noop"))
+
+    pagination_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+
+    if page < total_pages - 1:
+        pagination_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page_{page + 1}"))
+    else:
+        pagination_row.append(InlineKeyboardButton(text=" ", callback_data="noop"))
+
+    builder.row(*pagination_row)
+
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_my_collab"))
 
     return builder.as_markup()

@@ -17,6 +17,7 @@ import logging
 router = Router()
 logger = logging.getLogger(__name__)
 
+
 @router.message(F.text == "Мои компании")
 async def list_companies(message: Message, session: AsyncSession, state: FSMContext):
     """Просмотр списка компаний партнера"""
@@ -38,10 +39,23 @@ async def list_companies(message: Message, session: AsyncSession, state: FSMCont
     await message.answer(text='Выберите компанию из списка выше', reply_markup=builder.as_markup())
     await state.set_state(PartnerStates.company_menu)
 
+
 @router.message(F.text == "Создать компанию")
-async def create_company(message: Message, state: FSMContext):
+async def create_company(message: Message, state: FSMContext, session: AsyncSession):
     """Просмотр списка компаний партнера"""
+    comp_service = CompanyService(session)
+    user_comp = await comp_service.get_user_companies(owner_id=message.from_user.id)
+    if len(user_comp) >= 5:
+        await message.answer(
+            text="""🚫 <b>Лимит компаний достигнут</b>
+
+У вас уже есть 5 компаний. 
+Пожалуйста, удалите одну из существующих, чтобы добавить новую."""
+        )
+        await list_companies(message, session, state)
+        return
     await partner_selected(message=message, state=state)
+
 
 @router.callback_query(PartnerStates.company_menu, F.data.startswith("company_"))
 async def select_company(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
@@ -53,25 +67,41 @@ async def select_company(callback: CallbackQuery, state: FSMContext, session: As
     if not company:
         await callback.answer("Компания не найдена")
         return
+    main_location = await service.get_locations_by_company(company_id=company_id, main_loc=True)
+    await state.update_data(
+        company_id=company_id, company_name=company.Name_comp,
+        my_company_id=company_id, my_company_name=company.Name_comp,
+        location_id=main_location.id_location)
 
-    await state.update_data(dict(company_id=company_id, company_name=company.Name_comp,
-                                 my_company_id=company_id, my_company_name=company.Name_comp))
     company_info = (
         f"🏢 Компания: {company.Name_comp}\n"
-        f"📍 Локаций: {len(company.locations)}"
+        f"📍 Локаций: {len(company.locations) - 1}"
     )
 
     builder = ReplyKeyboardBuilder()
-    builder.row(KeyboardButton(text="Локации"))
-    builder.row(KeyboardButton(text="Добавить Локацию"))
-    builder.row(KeyboardButton(text="Редактировать Компанию"))
-    builder.row(KeyboardButton(text="ТГ Группы"))  
+
+    builder.row(
+        KeyboardButton(text="Локации"),
+        KeyboardButton(text="ТГ Группы"),
+    )
+    builder.row(
+        KeyboardButton(text="Коллаборации")
+    )
+    builder.row(
+        KeyboardButton(text="Добавить Локацию"),
+        KeyboardButton(text="Редактировать Компанию")
+    )
+
     builder.row(KeyboardButton(text="⬅️ Назад"))
 
-    await callback.message.answer(company_info, reply_markup=builder.as_markup(resize_keyboard=True))
+    await callback.message.answer(
+        company_info,
+        reply_markup=builder.as_markup(
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+    )
     await callback.answer()
-
-
 
 
 @router.message(PartnerStates.company_menu, F.text == "⬅️ Назад")
@@ -91,7 +121,7 @@ async def manage_locations(message: Message, state: FSMContext, session: AsyncSe
         return
 
     service = CompanyService(session)
-    locations = await service.get_locations_by_company(company_id)
+    locations = await service.get_locations_by_company(company_id=company_id, main_loc=False)
 
     if not locations:
         await message.answer("В этой компании пока нет локаций")
@@ -106,7 +136,52 @@ async def manage_locations(message: Message, state: FSMContext, session: AsyncSe
 @router.callback_query(PartnerStates.company_menu, F.data.startswith("location_"))
 async def select_location(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     """Выбор локации для управления"""
-    location_id = int(callback.data.split("_")[1])
+    location_id = callback.data.split("_")[1]
+    if location_id == 'back':
+        data = await state.get_data()
+        company_id = data['company_id']
+        service = CompanyService(session)
+        company = await service.get_company_by_id(company_id)
+
+        if not company:
+            await callback.answer("Компания не найдена")
+            return
+
+        await state.update_data(dict(company_id=company_id, company_name=company.Name_comp,
+                                     my_company_id=company_id, my_company_name=company.Name_comp))
+        company_info = (
+            f"🏢 Компания: {company.Name_comp}\n"
+            f"📍 Локаций: {len(company.locations) - 1}"
+        )
+
+        builder = ReplyKeyboardBuilder()
+
+        builder.row(
+            KeyboardButton(text="Локации"),
+            KeyboardButton(text="ТГ Группы"),
+        )
+        builder.row(
+            KeyboardButton(text="Коллаборации")
+        )
+        builder.row(
+            KeyboardButton(text="Добавить Локацию"),
+            KeyboardButton(text="Редактировать Компанию")
+        )
+
+        builder.row(KeyboardButton(text="⬅️ Назад"))
+
+        await callback.message.answer(
+            company_info,
+            reply_markup=builder.as_markup(
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+        )
+        await callback.answer()
+        return
+
+    location_id = int(location_id)
+
     data = await state.get_data()
     service = CompanyService(session)
     location = await service.get_location_by_id(location_id)
@@ -125,12 +200,12 @@ async def select_location(callback: CallbackQuery, state: FSMContext, session: A
 
     builder = ReplyKeyboardBuilder()
     builder.row(KeyboardButton(text="Редактировать"))
-    builder.row(KeyboardButton(text="Коллаборации"))
     builder.row(KeyboardButton(text="Администраторы"))
     builder.row(KeyboardButton(text="⬅️ Назад"))
 
     await state.set_state(PartnerStates.select_location_action)
-    await callback.message.answer(company_info, reply_markup=builder.as_markup(resize_keyboard=True))
+    await callback.message.answer(company_info,
+                                  reply_markup=builder.as_markup(resize_keyboard=True, one_time_keyboard=True))
     await callback.answer()
 
 
@@ -142,17 +217,32 @@ async def start_edit_location(message: Message, state: FSMContext, session: Asyn
 @router.message(PartnerStates.select_location_action, F.text == "Редактировать")
 async def start_edit_location(message: Message, state: FSMContext):
     builder = ReplyKeyboardBuilder()
-    builder.row(KeyboardButton(text="Название Локации"))
-    builder.row(KeyboardButton(text="Адресс Локации"))
-    builder.row(KeyboardButton(text="Город Локации"))
-    builder.row(KeyboardButton(text="Ссылка на карты"))
+
+    builder.row(
+        KeyboardButton(text="Название Локации"),
+        KeyboardButton(text="Адрес Локации"),
+        width=2
+    )
+    builder.row(
+        KeyboardButton(text="Город Локации"),
+        KeyboardButton(text="Ссылка на карты"),
+        width=2
+    )
+
     builder.row(KeyboardButton(text="Категории Локации"))
-    builder.row(KeyboardButton(text="Удалить Локацию"))
-    builder.row(KeyboardButton(text="Отменить редактирование"))
+
+    builder.row(
+        KeyboardButton(text="Удалить Локацию"),
+        KeyboardButton(text="Отменить редактирование"),
+        width=2
+    )
 
     await message.answer(
-        text="Выберите поле для редактирования",
-        reply_markup=builder.as_markup(resize_keyboard=True)
+        "Выберите параметр для редактирования:",
+        reply_markup=builder.as_markup(
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
     )
 
     await state.update_data(action=None)

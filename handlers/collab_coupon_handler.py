@@ -7,6 +7,7 @@ from handlers.common_handlers import logger
 from services.company_service import CompanyService
 from services.coupon_service import CouponService
 from utils.bot_obj import bot
+from utils.keyboards import main_menu
 from utils.states import CreateCouponTypeStates, CollaborationStates
 from datetime import datetime
 
@@ -22,8 +23,7 @@ async def start_coupon_type_creation(cb: CallbackQuery, state: FSMContext):
     await state.update_data(
         company_id=comp_id,
         location_id=location_id,
-        company_agent_id=data['agent_owner_id'],
-        location_agent_id=data['agent_owner_id'],
+        agent_owner_user_id=data['agent_owner_user_id'],
         agent_agree=False
     )
 
@@ -73,7 +73,6 @@ async def get_groups(cb: CallbackQuery, state: FSMContext):
 @router.message(CreateCouponTypeStates.usage_limit)
 async def get_usage_limit(message: Message, state: FSMContext):
     try:
-        print(message.text)
         limit = int(message.text)
         await state.update_data(usage_limit=limit)
         await message.answer("📅 Введите дату начала (ДД.ММ.ГГГГ):")
@@ -152,12 +151,17 @@ async def confirm_coupon_type(cb: CallbackQuery, state: FSMContext, session: Asy
         usage_limit=data["usage_limit"],
         start_date=start_date,
         end_date=end_date,
-        company_agent_id=data["company_id"],
-        location_agent_id=data["location_id"],
+        company_agent_id=data["agent_company_id"],
+        location_agent_id=data["agent_location_id"],
         days_for_used=data["days_for_used"],
     )
 
     await cb.message.answer("🎉 Купон успешно создан!")
+    await cb.message.delete()
+    await cb.message.answer(
+        "👋 Добро пожаловать в ReferralBot!",
+        reply_markup=await main_menu(session, cb.message.from_user.id)
+    )
     await state.clear()
 
     agent_user_id = data.get("agent_owner_user_id")
@@ -165,18 +169,18 @@ async def confirm_coupon_type(cb: CallbackQuery, state: FSMContext, session: Asy
         return
     comp_service = CompanyService(session)
 
-    my_location = await comp_service.get_location_by_id(data["my_location_id"])
-    my_company = await comp_service.get_company_by_id(data["my_company_id"])
+    my_location = await comp_service.get_location_by_id(data["location_id"])
+    my_company = await comp_service.get_company_by_id(data["company_id"])
 
-    agent_location = await comp_service.get_location_by_id(data["location_id"])
-    agent_company = await comp_service.get_company_by_id(data["company_id"])
+    agent_location = await comp_service.get_location_by_id(data["agent_location_id"])
+    agent_company = await comp_service.get_company_by_id(data["agent_company_id"])
 
     notify_text = (
         f"📣 <b>Новая заявка на коллаборацию!</b>\n\n"
 
         f"👤 <b>Компания-заявитель</b>\n"
         f"🏢 <b>Название:</b> {my_company.Name_comp}\n"
-        f"📍 <b>Локация:</b> {my_location.name_loc}\n"
+        # f"📍 <b>Локация:</b> {my_location.name_loc}\n"
         f"💸 <b>Скидка:</b> {coupon.discount_percent}%\n"
         f"💼 <b>Комиссия:</b> {coupon.commission_percent}%\n"
         f"📅 <b>Период действия:</b> {coupon.start_date.strftime('%d.%m.%Y')} – {coupon.end_date.strftime('%d.%m.%Y')}\n"
@@ -186,7 +190,6 @@ async def confirm_coupon_type(cb: CallbackQuery, state: FSMContext, session: Asy
 
         f"🛡 <b>Ваша компания</b>\n"
         f"🏢 <b>Название:</b> {agent_company.Name_comp}\n"
-        f"📍 <b>Локация:</b> {agent_location.name_loc}\n\n"
 
         f"<i>Пожалуйста, подтвердите или отклоните предложение.</i>"
     )
@@ -195,13 +198,13 @@ async def confirm_coupon_type(cb: CallbackQuery, state: FSMContext, session: Asy
         [
             InlineKeyboardButton(
                 text="✅ Подтвердить",
-                callback_data=f"confirm_coupon_type_{coupon.id_coupon_type}"
+                callback_data=f"req_collab_confirm_{cb.from_user.id}_{coupon.id_coupon_type}"
             )
         ],
         [
             InlineKeyboardButton(
                 text="❌ Отклонить",
-                callback_data=f"cancel_coupon_type_{coupon.id_coupon_type}"
+                callback_data=f"req_collab_reject_{cb.from_user.id}_{coupon.id_coupon_type}"
             )
         ]
     ])
