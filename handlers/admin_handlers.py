@@ -6,12 +6,16 @@ from aiogram.fsm.state import State, StatesGroup
 from services.category_service import CategoryService
 from services.coupon_service import CouponService
 from services.user_service import UserService
+from services.company_service import CompanyService
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.database.models import User, CompanyCategory
 from utils.keyboards import categories_keyboard
 import logging
-from aiogram.filters import StateFilter
+from aiogram.filters import StateFilter, Command
 from utils.states import AdminStates
+import qrcode
+from io import BytesIO
+from utils.bot_obj import bot
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -130,3 +134,56 @@ async def process_order_amount(message: Message, state: FSMContext, session: Asy
         logger.error(f"Ошибка активации купона: {e}")
         await message.answer("❌ Не удалось активировать купон")
         await state.clear()
+
+@router.message(Command("get_coupon_qr"))
+async def handle_get_coupon_qr(message: Message, session: AsyncSession):
+    """Генерация QR-кода для выдачи купона"""
+    # Проверка прав администратора
+    user_service = UserService(session)
+    if not await user_service.is_admin(message.from_user.id):
+        await message.answer("❌ Только для администраторов")
+        return
+
+    # Парсинг аргументов
+    args = message.text.split()
+    if len(args) != 3:
+        await message.answer("❗ Использование:\n`/get_coupon_qr <ID_купона> <ID_локации>`", parse_mode="Markdown")
+        return
+
+    try:
+        collaboration_id = int(args[1])
+        location_id = int(args[2])
+    except ValueError:
+        await message.answer("❌ Некорректные ID. Должны быть числа")
+        return
+
+    # Проверка существования купона и локации
+    coupon_service = CouponService(session)
+    if not await coupon_service.collaboration_exists(collaboration_id):
+        await message.answer(f"❌ Купон {collaboration_id} не существует")
+        return
+
+    company_service = CompanyService(session)
+    if not await company_service.location_exists(location_id):
+        await message.answer(f"❌ Локация {location_id} не существует")
+        return
+
+    # Генерация deep-ссылки
+    bot_username = (await bot.get_me()).username
+    deep_link = f"https://t.me/{bot_username}?start=coupon_{collaboration_id}_{message.from_user.id}_{location_id}"
+    
+    # Создание QR-кода
+    qr = qrcode.make(deep_link)
+    img_bytes = BytesIO()
+    qr.save(img_bytes, format='PNG')
+    img_bytes.seek(0)
+
+    # Отправка результата
+    await message.answer_photo(
+        photo=img_bytes,
+        caption=f"✅ QR для выдачи купона:\n"
+                f"• Купон: `{collaboration_id}`\n"
+                f"• Локация: `{location_id}`\n"
+                f"Ссылка: `{deep_link}`",
+        parse_mode="Markdown"
+    )

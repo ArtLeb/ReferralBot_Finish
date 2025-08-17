@@ -11,16 +11,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from handlers.common_handlers import partner_selected
 from services.auth_service import AuthService
 from services.role_service import RoleService
+from services.coupon_service import CouponService
 from utils.keyboards import main_menu
 from utils.states import RegistrationStates
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-
 @router.message(Command("start"))
 async def start(message: Message, session: AsyncSession, state: FSMContext):
-    """Обработчик команды /start с регистрацией пользователя"""
+    """Обработчик команды /start с регистрацией пользователя и обработкой deep-link"""
+    # Обработка deep-link для купона
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith('coupon_'):
+        try:
+            # Парсинг параметров: coupon_<collaboration>_<admin>_<location>
+            params = args[1].split('_')
+            collaboration_id = int(params[1])
+            admin_tg_id = int(params[2])
+            location_id = int(params[3])
+
+            # Вызов функции выдачи купона
+            coupon_service = CouponService(session)
+            result = await coupon_service.issue_coupon_to_client(
+                client_id=message.from_user.id,
+                collaboration_id=collaboration_id,
+                admin_tg_id=admin_tg_id,
+                location_id=location_id
+            )
+            await message.answer(result)
+            return  # Прерываем дальнейшую обработку
+        except Exception as e:
+            await message.answer(f"🚫 Ошибка активации купона: {str(e)}")
+    
+    # Стандартная обработка /start
     auth_service = AuthService(session)
     user, exists = await auth_service.get_or_create_user(
         tg_id=message.from_user.id,
@@ -48,12 +72,10 @@ async def start(message: Message, session: AsyncSession, state: FSMContext):
             reply_markup=builder.as_markup(resize_keyboard=True)
         )
 
-
 @router.message(Command("regcomp"))
 async def regcomp(message: Message, state: FSMContext):
     """Обработчик команды /start с регистрацией пользователя"""
     await partner_selected(message=message, state=state)
-
 
 @router.message(Command("cancel"), ~StateFilter(default_state))
 async def cancel_registration(message: Message, state: FSMContext):

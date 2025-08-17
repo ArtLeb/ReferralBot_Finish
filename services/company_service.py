@@ -25,14 +25,14 @@ class CompanyService:
         ).join(
             LocCat, LocCat.id_location == CompLocation.id_location and
                     LocCat.comp_id == CompLocation.id_comp)
-
+        
         if city:
             city_names = await CityLogger(self.session).get_cities_name_by_id(city)
-
+            
             stmt = stmt.where(CompLocation.city.in_(city_names))
         if category:
             stmt = stmt.where(LocCat.id_category.in_(category))
-
+            
         stmt = stmt.distinct(Company.id_comp)
         result = await self.session.execute(stmt)
         return result.scalars().all()
@@ -58,18 +58,18 @@ class CompanyService:
                 (UserRole.user_id == owner_id) &
                 (UserRole.role == "partner")
             )
-
+            
             count = await self.session.scalar(stmt)
             if count >= 5:
                 raise ValueError("Превышен лимит компаний (5 на пользователя)")
-
+            
             # Создание и сохранение компании
             company = Company(Name_comp=name)
             self.session.add(company)
-
+            
             await self.session.commit()
             await self.session.refresh(company)
-
+            
             return company
 
         except Exception as e:
@@ -219,10 +219,10 @@ class CompanyService:
             query = select(LocCat.id_category).where(
                 (LocCat.comp_id == comp_id) &
                 (LocCat.id_location == id_location))
-
+            
             result = await self.session.execute(query)
             return [row for row in result.scalars()]
-
+        
         except Exception as e:
             logger.error(f"Ошибка при получении категорий локации: {e}")
             await self.session.rollback()
@@ -243,7 +243,7 @@ class CompanyService:
             stmt = stmt.where(CompLocation.main_loc == main_loc)
         result = await self.session.execute(stmt)
         locations = result.scalars().first() if main_loc else result.scalars().all()
-
+        
         return locations
 
     async def get_location_by_id(self, location_id: int) -> CompLocation:
@@ -306,3 +306,15 @@ class CompanyService:
             except Exception as e:
                 await self.session.rollback()
         return None
+
+    async def location_exists(self, location_id: int) -> bool:
+        """
+        Проверяет существование локации
+        Args:
+            location_id: ID локации
+        Returns:
+            bool: True если локация существует
+        """
+        stmt = select(CompLocation).where(CompLocation.id_location == location_id)
+        result = await self.session.execute(stmt)
+        return result.scalar() is not None

@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from utils.database.models import User
+from utils.database.models import User, UserRole
 
 class UserService:
     """Сервис для работы с пользователями"""
@@ -61,3 +61,24 @@ class UserService:
             await self.session.commit()
             return user
         return None
+
+    async def is_admin(self, user_id: int) -> bool:
+        """
+        Проверяет, является ли пользователь администратором
+        Args:
+            user_id: ID пользователя (Telegram ID)
+        Returns:
+            bool: True если администратор
+        """
+        # Находим внутренний ID пользователя
+        user = await self.get_user_by_tg_id(user_id)
+        if not user:
+            return False
+        
+        # Проверяем наличие роли admin
+        stmt = select(UserRole).where(
+            (UserRole.user_id == user.id) &
+            (UserRole.role == "admin")
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() is not None

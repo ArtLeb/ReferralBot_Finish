@@ -1,14 +1,15 @@
 import uuid
 from datetime import datetime, timedelta, date
 from decimal import Decimal
-from typing import Tuple
+from typing import Tuple, Optional
 
 from sqlalchemy import select, or_, and_
 from sqlalchemy.orm import joinedload
 
 from repositories.coupon_repository import CouponRepository
 from services.company_service import CompanyService
-from utils.database.models import Coupon, CouponType, CouponStatus, CompLocation, UserRole, Company
+from services.user_service import UserService
+from utils.database.models import Coupon, CouponType, CouponStatus, CompLocation, UserRole, Company, User
 from services.group_service import GroupService
 
 
@@ -308,3 +309,85 @@ class CouponService:
             await self.session.commit()
             return coupon_type
         return False
+
+    async def collaboration_exists(self, collaboration_id: int) -> bool:
+        """
+        Проверяет существование коллаборации
+        Args:
+            collaboration_id: ID типа купона
+        Returns:
+            bool: True если коллаборация существует
+        """
+        stmt = select(CouponType).where(CouponType.id_coupon_type == collaboration_id)
+        result = await self.session.execute(stmt)
+        return result.scalar() is not None
+
+    async def issue_coupon_to_client(
+        self, 
+        client_id: int, 
+        collaboration_id: int,
+        admin_tg_id: int,
+        location_id: int
+    ) -> str:
+        """
+        Выдает купон клиенту через QR-код
+        Args:
+            client_id: Telegram ID клиента
+            collaboration_id: ID типа купона
+            admin_tg_id: Telegram ID администратора
+            location_id: ID локации
+        Returns:
+            str: Сообщение с результатом операции
+        """
+        # Поиск внутреннего ID администратора
+        user_service = UserService(self.session)
+        admin = await user_service.get_user_by_tg_id(admin_tg_id)
+        if not admin:
+            return "❌ Администратор не найден"
+        
+        # Проверка существования купона
+        coupon_type = await self.session.get(CouponType, collaboration_id)
+        if not coupon_type:
+            return "❌ Тип купона не найден"
+        
+        # Проверка существования локации
+        company_service = CompanyService(self.session)
+        location = await company_service.get_location_by_id(location_id)
+        if not location:
+            return "❌ Локация не найдена"
+        
+        # Проверка, что пользователь еще не получал этот купон
+        if await self.has_coupon(client_id, collaboration_id):
+            return "⚠️ Вы уже получали этот купон ранее"
+        
+        # Генерация купона
+        try:
+            coupon = await self.generate_coupon(
+                issuer_id=admin.id,
+                client_id=client_id,
+                coupon_type_id=collaboration_id
+            )
+            return f"🎉 Купон активирован!\nКод: `{coupon.code}`"
+        except Exception as e:
+            return f"🚫 Ошибка: {str(e)}"
+
+    async def has_coupon(self, user_id: int, collaboration_id: int) -> bool:
+        """
+        Проверяет наличие купона у пользователя
+        Args:
+            user_id: Telegram ID пользователя
+            collaboration_id: ID типа купона
+        Returns:
+            bool: True если купон уже есть
+        """
+        # Находим внутренний ID пользователя
+        user = await UserService(self.session).get_user_by_tg_id(user_id)
+        if not user:
+            return False
+        
+        stmt = select(Coupon).where(
+            (Coupon.client_id == user.id) &
+            (Coupon.coupon_type_id == collaboration_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() is not None
